@@ -1,25 +1,14 @@
 //! `gono-cloud`: command line entry point of Gono Cloud.
 
 mod app;
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "wired into the router in the routing step")
-)]
 mod auth;
 mod cli;
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "wired into the router in the routing step")
-)]
 mod client_ip;
 mod commands;
 mod logging;
 mod password_input;
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "wired into the router in the routing step")
-)]
 mod ratelimit;
+mod request_log;
 mod shutdown;
 
 use std::process::ExitCode;

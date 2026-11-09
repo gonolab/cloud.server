@@ -17,6 +17,7 @@ anyhow.workspace = true
 axum.workspace = true
 base64.workspace = true
 clap.workspace = true
+dav-server.workspace = true
 gono-core.workspace = true
 gono-dav.workspace = true
 gono-nextcloud.workspace = true
@@ -29,7 +30,9 @@ tracing-appender.workspace = true
 tracing-subscriber.workspace = true
 
 [dev-dependencies]
+http-body-util.workspace = true
 tempfile.workspace = true
+tower = { version = "0.5.3", default-features = false, features = ["util"] }
 
 [lints]
 workspace = true

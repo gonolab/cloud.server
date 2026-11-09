@@ -5,10 +5,16 @@
 //! alias). `Ctx` carries the authenticated user and the scopes of the app password used for the
 //! request, so per-request state never requires building a new handler.
 //!
+//! - [`service`]: `DavService`, the entry point: request checks, `handle_guarded`, and the
+//!   response information for the OC-* headers.
+//! - [`ctx`]: `Ctx`, the per-request credentials value (identity, request details, caches).
+//! - [`resolve`]: mapping of DAV paths through the app password's mounts.
 //! - [`fs`]: `ScopedFs`, the `GuardedFileSystem<Ctx>` implementation (path mapping, virtual
 //!   directories, permission checks).
 //! - [`metadata`]: the `DavMetaData` wrapper that gives every entry a single ETag source.
+//! - [`props`]: Nextcloud live properties and permissions.
 //! - [`locks`]: the persistent `DavLockSystem`, keyed by storage path.
+//! - [`oc_headers`]: the tower layer adding `OC-ETag`, `OC-FileId` and `X-NC-Permissions`.
 //!
 //! All metadata writes go through the `MetaStore` (see [`gono_core::meta`]).
 
@@ -18,9 +24,13 @@ pub mod fs;
 pub mod identity;
 pub mod locks;
 pub mod metadata;
+pub mod oc_headers;
 pub mod props;
 pub mod resolve;
+pub mod service;
 
 pub use ctx::{Ctx, PropfindKind, RequestInfo};
 pub use fs::ScopedFs;
 pub use identity::{Identity, Mount};
+pub use oc_headers::OcHeadersLayer;
+pub use service::{DavBody, DavService, OcInfo};

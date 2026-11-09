@@ -69,7 +69,8 @@ annotate() {
     title="${title//$'\n'/'%0A'}"
     title="${title//':'/'%3A'}"
     title="${title//','/'%2C'}"
-    echo "::error title=${title}::${message}"
+    # The runner ignores annotations without a message.
+    echo "::error title=${title}::${message:-${title}}"
   fi
 }
 
@@ -248,15 +249,20 @@ STATUS=0
 
 echo "==> running the acceptance suite"
 set +e
-cargo test --manifest-path "${ACCEPT_DIR}/Cargo.toml" --no-fail-fast -- ${CARGO_TEST_ARGS[@]+"${CARGO_TEST_ARGS[@]}"} 2>&1 |
-  tee "${TEST_LOG}"
+# Plain output: the results below are parsed from it (CI sets CARGO_TERM_COLOR=always).
+CARGO_TERM_COLOR=never cargo test --manifest-path "${ACCEPT_DIR}/Cargo.toml" --no-fail-fast \
+  -- ${CARGO_TEST_ARGS[@]+"${CARGO_TEST_ARGS[@]}"} 2>&1 | tee "${TEST_LOG}"
 CARGO_STATUS="${PIPESTATUS[0]}"
 set -e
+
+strip_ansi() {
+  sed $'s/\033\\[[0-9;]*m//g' "$@"
+}
 
 # Collect `<binary>::<test>` names for failed and passed tests from the libtest output.
 collect_results() {
   local outcome="$1"
-  awk -v outcome="${outcome}" '
+  strip_ansi "${TEST_LOG}" | awk -v outcome="${outcome}" '
     /^ *Running tests\// {
       binary = $2
       sub(/^tests\//, "", binary)
@@ -267,7 +273,7 @@ collect_results() {
       result = $NF
       if (result == outcome && binary != "") print binary "::" name
     }
-  ' "${TEST_LOG}" | sort -u
+  ' | sort -u
 }
 
 # The first lines of a failed test's output (`---- <name> stdout ----` block).
@@ -307,7 +313,7 @@ if [[ -n "${UNEXPECTED_PASSES}" ]]; then
 fi
 if [[ "${CARGO_STATUS}" != "0" && -z "${FAILED}" ]]; then
   echo "cargo test failed without reporting test failures (build error?)"
-  annotate "cargo test failed" "$(grep -E '^error' "${TEST_LOG}" | head -n 10)"
+  annotate "cargo test failed" "$(strip_ansi "${TEST_LOG}" | grep -E '^error' | head -n 10)"
   STATUS=1
 fi
 if [[ "${STATUS}" == "0" ]]; then

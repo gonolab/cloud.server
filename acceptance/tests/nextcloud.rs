@@ -59,6 +59,27 @@ async fn dav_root_answers_anonymous_probes_with_a_basic_challenge() {
     }
 }
 
+/// NextcloudKit (iOS) finds the entries of a multistatus by the literal names `d:multistatus`,
+/// `d:response`, `d:href`, ..., as SabreDAV writes them; with another prefix it lists nothing.
+#[tokio::test]
+async fn multistatus_writes_the_dav_namespace_as_d() {
+    let Some(ctx) = Ctx::new().await else { return };
+    let dav = ctx.dav();
+    for response in [
+        dav.propfind("", "1", gono_acceptance::dav::PROPFIND_STANDARD)
+            .await,
+        dav.report("", FILTER_FILES_FAVORITES).await,
+    ] {
+        response.expect(&[207]);
+        let xml = response.text();
+        assert!(
+            xml.contains("<d:multistatus") && xml.contains(r#"xmlns:d="DAV:""#),
+            "{xml}"
+        );
+        assert!(!xml.contains("<D:") && !xml.contains("</D:"), "{xml}");
+    }
+}
+
 #[tokio::test]
 async fn capabilities_are_public_on_all_aliases() {
     let Some(ctx) = Ctx::bare() else { return };

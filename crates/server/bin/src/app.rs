@@ -22,8 +22,9 @@
 //! - The web admin UI under `admin.path`, when `admin.enabled`: see [`crate::admin`].
 //!
 //! Every response to a WebDAV request passes [`OcHeadersLayer`], which adds the `OC-ETag`,
-//! `OC-FileId` and `X-NC-Permissions` headers, and every request is logged once with secrets
-//! removed from its target ([`crate::request_log`]).
+//! `OC-FileId` and `X-NC-Permissions` headers, and [`DavPrefixLayer`], which writes the `DAV:`
+//! prefix of XML bodies as `d:` (the Nextcloud iOS app finds no entries otherwise). Every
+//! request is logged once with secrets removed from its target ([`crate::request_log`]).
 
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
@@ -38,7 +39,7 @@ use axum::{
 };
 use gono_server_core::db;
 use gono_server_dav::{
-    DavService, Identity, OcHeadersLayer, report, resolve::FILES_ROOT, xml_limits,
+    DavPrefixLayer, DavService, Identity, OcHeadersLayer, report, resolve::FILES_ROOT, xml_limits,
 };
 use gono_server_nextcloud::{
     chunking::{ChunkedUploads, UPLOADS_ROOT},
@@ -94,7 +95,8 @@ pub fn router(state: AppState) -> Router {
         .route("/remote.php/dav", any(dav_namespace))
         .route("/remote.php/dav/", any(dav_namespace))
         .route("/remote.php/dav/{*rest}", any(dav_namespace))
-        .layer(OcHeadersLayer);
+        .layer(OcHeadersLayer)
+        .layer(DavPrefixLayer);
     let nextcloud = Router::new()
         .route("/status.php", get(nextcloud::status_php))
         .route("/index.php/204", get(nextcloud::connectivity))
@@ -557,6 +559,73 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn dav_xml_uses_the_d_prefix_but_file_contents_stay_unchanged() {
+        // NextcloudKit (iOS) looks up `d:multistatus`, `d:response`, ... by their literal names.
+        let f = fixture().await;
+        let xml_file = r#"<D:x xmlns:D="DAV:"><D:y/></D:x>"#;
+        let put = f
+            .send(
+                "PUT",
+                &format!("{FILES}/doc.xml"),
+                Some(&f.full),
+                &[("Content-Type", "application/xml")],
+                xml_file,
+            )
+            .await;
+        assert_eq!(put.status, StatusCode::CREATED);
+
+        let propfind = f
+            .send("PROPFIND", FILES, Some(&f.full), &[("Depth", "1")], "")
+            .await;
+        assert_eq!(propfind.status, StatusCode::MULTI_STATUS);
+        let report = f
+            .send(
+                "REPORT",
+                FILES,
+                Some(&f.full),
+                &[],
+                r#"<oc:filter-files xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns"><oc:filter-rules><oc:favorite>1</oc:favorite></oc:filter-rules></oc:filter-files>"#,
+            )
+            .await;
+        assert_eq!(report.status, StatusCode::MULTI_STATUS);
+        let infinity = f
+            .send(
+                "PROPFIND",
+                FILES,
+                Some(&f.full),
+                &[("Depth", "infinity")],
+                "",
+            )
+            .await;
+        assert_eq!(infinity.status, StatusCode::FORBIDDEN);
+        for reply in [&propfind, &report, &infinity] {
+            assert!(reply.body.contains(r#"xmlns:d="DAV:""#), "{}", reply.body);
+            assert!(!reply.body.contains("<D:"), "{}", reply.body);
+            assert!(!reply.body.contains("xmlns:D="), "{}", reply.body);
+        }
+        assert!(
+            propfind.body.contains("<d:multistatus"),
+            "{}",
+            propfind.body
+        );
+        assert!(
+            propfind.body.contains("/doc.xml</d:href>"),
+            "{}",
+            propfind.body
+        );
+        assert!(report.body.contains("<d:multistatus"), "{}", report.body);
+        if let Some(length) = propfind.headers.get("content-length") {
+            assert_eq!(length.to_str().unwrap(), propfind.body.len().to_string());
+        }
+
+        let get = f
+            .send("GET", &format!("{FILES}/doc.xml"), Some(&f.full), &[], "")
+            .await;
+        assert_eq!(get.status, StatusCode::OK);
+        assert_eq!(get.body, xml_file, "a file's content is never rewritten");
+    }
+
+    #[tokio::test]
     async fn repeated_failures_are_rate_limited() {
         let f = fixture().await;
         for _ in 0..crate::ratelimit::BURST {
@@ -699,7 +768,7 @@ mod tests {
         assert!(
             propfind
                 .body
-                .contains(&format!("<D:getetag>{etag}</D:getetag>")),
+                .contains(&format!("<d:getetag>{etag}</d:getetag>")),
             "{}",
             propfind.body
         );
@@ -751,12 +820,12 @@ mod tests {
         assert!(
             reply
                 .body
-                .contains("/remote.php/dav/files/alice/dir/</D:href>"),
+                .contains("/remote.php/dav/files/alice/dir/</d:href>"),
             "{}",
             reply.body
         );
         assert!(
-            reply.body.contains("/dir/fav.txt</D:href>"),
+            reply.body.contains("/dir/fav.txt</d:href>"),
             "{}",
             reply.body
         );
@@ -764,7 +833,7 @@ mod tests {
         assert!(
             reply
                 .body
-                .contains(&format!("<D:getetag>{}</D:getetag>", put.header("etag"))),
+                .contains(&format!("<d:getetag>{}</d:getetag>", put.header("etag"))),
             "{}",
             reply.body
         );
@@ -789,7 +858,7 @@ mod tests {
             below.body
         );
         assert!(
-            !below.body.contains("dir/</D:href>"),
+            !below.body.contains("dir/</d:href>"),
             "the base is not listed: {}",
             below.body
         );
@@ -810,8 +879,8 @@ mod tests {
 
     fn xmltree_parses(xml: &str) -> bool {
         // The acceptance suite parses with a full XML parser; a structural check is enough here.
-        xml.matches("<D:response>").count() == xml.matches("</D:response>").count()
-            && xml.trim_end().ends_with("</D:multistatus>")
+        xml.matches("<d:response>").count() == xml.matches("</d:response>").count()
+            && xml.trim_end().ends_with("</d:multistatus>")
     }
 
     #[tokio::test]

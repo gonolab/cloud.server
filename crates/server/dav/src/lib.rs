@@ -17,6 +17,8 @@
 //! - [`report`]: the `oc:filter-files` favorites REPORT, served next to dav-server.
 //! - [`oc_headers`]: the tower layer adding `OC-ETag`, `OC-FileId` and `X-NC-Permissions`.
 //! - [`xml_limits`]: the size and nesting limits for XML request bodies.
+//! - [`xml_prefix`]: the tower layer that writes the `DAV:` prefix as `d:` in XML responses, as
+//!   the Nextcloud iOS app requires.
 //!
 //! All metadata writes go through the `MetaStore` (see [`gono_server_core::meta`]).
 
@@ -32,9 +34,11 @@ pub mod report;
 pub mod resolve;
 pub mod service;
 pub mod xml_limits;
+pub mod xml_prefix;
 
 pub use ctx::{Ctx, PropfindKind, RequestInfo};
 pub use fs::ScopedFs;
 pub use identity::{Identity, Mount};
 pub use oc_headers::OcHeadersLayer;
 pub use service::{DavBody, DavService, OcInfo};
+pub use xml_prefix::DavPrefixLayer;

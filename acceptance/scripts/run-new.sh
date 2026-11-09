@@ -17,7 +17,7 @@
 #                          when litmus is not installed or reports a failure
 #   LITMUS=<path>          litmus binary to use instead of the one on PATH
 #   KEEP_WORK_DIR=1        keep the temporary config, data, and logs for inspection
-set -euo pipefail
+set -Eeuo pipefail
 
 ACCEPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "${ACCEPT_DIR}/.." && pwd)"
@@ -98,6 +98,16 @@ SERVER_PID=""
 
 cleanup() {
   local status=$?
+  if [[ "${status}" != "0" ]]; then
+    # On CI the logs need a sign-in; leave the essentials on the run page.
+    local tails=""
+    for log in "${TEST_LOG}" "${LITMUS_LOG:-}" "${STDOUT_LOG}" "${LOG_FILE}"; do
+      if [[ -n "${log}" && -s "${log}" ]]; then
+        tails+="== ${log##*/}"$'\n'"$(tail -n 25 "${log}")"$'\n'
+      fi
+    done
+    annotate "run-new.sh exited with ${status}" "last command: ${BASH_COMMAND}"$'\n'"${tails}"
+  fi
   if [[ -n "${SERVER_PID}" ]] && kill -0 "${SERVER_PID}" 2>/dev/null; then
     kill "${SERVER_PID}" 2>/dev/null || true
     wait "${SERVER_PID}" 2>/dev/null || true

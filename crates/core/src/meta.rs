@@ -1,10 +1,10 @@
 //! Rules for path-keyed metadata.
 //!
-//! File metadata lives in the `files` table and the tables keyed by it (`dead_props`, `locks`,
-//! `change_log`, ...). The upcoming `MetaStore` will be the **only** code that writes to them:
-//! every WebDAV operation becomes exactly one `BEGIN IMMEDIATE` transaction (see
-//! [`crate::db::begin_immediate`]), and every change bumps the ETag of the touched entry and of
-//! all of its ancestor collections inside that same transaction.
+//! File metadata lives in the `files` table and the tables keyed by it (`dead_props`,
+//! `change_log`). [`MetaStore`] (in [`store`]) is the **only** code that writes to them: every
+//! WebDAV operation becomes exactly one `BEGIN IMMEDIATE` transaction (see
+//! [`crate::db::begin_immediate`]), and every change bumps the ETag and adjusts the recursive
+//! size (`oc:size`) of all ancestor collections inside that same transaction.
 //!
 //! # `rel_path` format
 //!
@@ -26,6 +26,10 @@
 //!   `LIKE` would treat `_` and `%` in file names as wildcards and, in SQLite, compares ASCII
 //!   case-insensitively, so it silently matches unrelated rows. The range form also uses the
 //!   `(owner_id, rel_path)` index. [`descendant_bounds`] computes the two bounds.
+
+mod store;
+
+pub use store::{DeadProp, DiskStat, FileRow, MetaStore, derived_file_etag};
 
 /// Returns the `[lower, upper)` bounds that select every strict descendant of `dir`.
 ///

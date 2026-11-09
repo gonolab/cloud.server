@@ -16,6 +16,12 @@ tested with `nextcloudcmd` in CI; the mobile apps with `docs/mobile-checklist.md
 the deployment guide are still to come; see `docs/v1-scope.md`. To put the server behind nginx
 or Caddy, see [`docs/reverse-proxy.md`](docs/reverse-proxy.md).
 
+## Repository layout
+
+The server crates live under `crates/server/`. The repository is a monorepo that the Gono client
+will join once its rewrite starts; [`docs/repository-layout.md`](docs/repository-layout.md)
+describes the current and planned layout and the rules for both sides.
+
 ## Legacy implementation
 
 The previous implementation was removed in preparation for the rewrite. It is kept in the git

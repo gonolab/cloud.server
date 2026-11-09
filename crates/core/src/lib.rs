@@ -14,6 +14,7 @@
 //! - [`uploads`]: chunked upload sessions.
 //! - [`login_flows`]: pending Login Flow v2 sign-ins.
 //! - [`web_sessions`]: browser sessions of the server's HTML pages.
+//! - [`rescan`]: walking a user's tree on disk for `gono-cloud rescan`.
 //! - [`secret`]: random tokens and their digests.
 //! - [`stats`]: counts shown on the web admin UI.
 //! - [`error`]: the domain error types.
@@ -27,6 +28,7 @@ pub mod login_flows;
 pub mod meta;
 pub mod password;
 pub mod path;
+pub mod rescan;
 pub mod secret;
 pub mod settings;
 pub mod stats;

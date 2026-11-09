@@ -33,7 +33,9 @@ pub mod changes;
 mod store;
 
 pub use changes::{ChangeEvent, ChangeOperation, ChangeSink};
-pub use store::{DeadProp, DiskStat, FileRow, MetaStore, PropChange, derived_file_etag};
+pub use store::{
+    DeadProp, DiskStat, FileRow, MetaStore, PropChange, Reconciled, derived_file_etag,
+};
 
 /// Returns the `[lower, upper)` bounds that select every strict descendant of `dir`.
 ///

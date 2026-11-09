@@ -52,7 +52,7 @@ use sha2::{Digest, Sha256};
 use crate::{
     ctx::{Ctx, PropfindKind},
     file::{CreatedFile, ReadFile, WriteFile},
-    metadata::{DavMeta, Entry, Kind, ns_from_time, time_from_ns},
+    metadata::{DavMeta, Entry, Kind, time_from_ns},
     props,
     resolve::{self, Location},
 };
@@ -116,11 +116,7 @@ fn db_error(err: gono_core::Error) -> FsError {
 }
 
 pub(crate) fn disk_stat(meta: &std::fs::Metadata) -> DiskStat {
-    DiskStat {
-        is_dir: meta.is_dir(),
-        mtime_ns: meta.modified().map_or(0, ns_from_time),
-        size: if meta.is_dir() { 0 } else { meta.len() },
-    }
+    DiskStat::from_metadata(meta)
 }
 
 impl ScopedFs {

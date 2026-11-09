@@ -785,6 +785,7 @@ dependencies = [
  "argon2",
  "ipnet",
  "rand 0.10.3",
+ "rustix",
  "secrecy",
  "serde",
  "sha2 0.11.1",

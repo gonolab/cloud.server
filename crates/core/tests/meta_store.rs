@@ -699,3 +699,217 @@ async fn every_logged_change_is_published_after_the_commit() {
         published[..2]
     );
 }
+
+fn entries(list: &[(&str, Option<u64>)]) -> Vec<(RelPath, DiskStat)> {
+    list.iter()
+        .map(|(path, size)| {
+            let stat = match size {
+                Some(size) => file_stat(*size),
+                None => dir_stat(),
+            };
+            (p(path), stat)
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn reconcile_adds_removes_and_updates_what_changed_on_disk() {
+    use gono_core::meta::ChangeOperation;
+
+    let fixture = fixture().await;
+    let recorder = std::sync::Arc::new(Recorder::default());
+    let store = fixture.store.clone().with_sink(recorder.clone());
+    let owner = fixture.owner;
+    store.record_mkdir(owner, &p("docs"), 1).await.unwrap();
+    let kept = store
+        .record_write(owner, &p("docs/kept.txt"), file_stat(10))
+        .await
+        .unwrap();
+    let changed = store
+        .record_write(owner, &p("docs/changed.txt"), file_stat(20))
+        .await
+        .unwrap();
+    store.record_mkdir(owner, &p("old"), 1).await.unwrap();
+    store
+        .record_write(owner, &p("old/gone.txt"), file_stat(5))
+        .await
+        .unwrap();
+    let root_before = store.get(owner, &RelPath::root()).await.unwrap().unwrap();
+    assert_eq!(root_before.size, 35);
+    recorder.0.lock().unwrap().clear();
+
+    // On disk: `old` is gone, `changed.txt` grew, `new/a/b.txt` appeared.
+    let disk = entries(&[
+        ("", None),
+        ("docs", None),
+        ("docs/changed.txt", Some(25)),
+        ("docs/kept.txt", Some(10)),
+        ("new", None),
+        ("new/a", None),
+        ("new/a/b.txt", Some(7)),
+    ]);
+    let dry = store
+        .reconcile(owner, &RelPath::root(), &[], &disk, true)
+        .await
+        .unwrap();
+    assert_eq!(dry.added, [p("new")]);
+    assert!(
+        recorder.0.lock().unwrap().is_empty(),
+        "a dry run publishes nothing"
+    );
+    assert!(
+        store.get(owner, &p("old")).await.unwrap().is_some(),
+        "and changes nothing"
+    );
+
+    let report = store
+        .reconcile(owner, &RelPath::root(), &[], &disk, false)
+        .await
+        .unwrap();
+    assert_eq!(report, dry, "the dry run predicts the real run");
+    assert_eq!(report.added, [p("new")]);
+    assert_eq!(report.added_rows, 3);
+    assert_eq!(report.removed, [p("old")]);
+    assert_eq!(report.removed_rows, 2);
+    assert_eq!(report.modified, [p("docs/changed.txt")]);
+
+    // Rows, sizes and ETags.
+    assert!(
+        store
+            .get(owner, &p("old/gone.txt"))
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let file = store
+        .get(owner, &p("docs/changed.txt"))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(file.id, changed.id, "the file id is kept");
+    assert_eq!(
+        file.etag,
+        gono_core::meta::derived_file_etag(file.id, 1_000, 25)
+    );
+    let unchanged = store
+        .get(owner, &p("docs/kept.txt"))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(unchanged.etag, kept.etag);
+    let root = store.get(owner, &RelPath::root()).await.unwrap().unwrap();
+    assert_eq!(root.size, 42);
+    assert_ne!(root.etag, root_before.etag);
+    assert_eq!(
+        store.get(owner, &p("new/a")).await.unwrap().unwrap().size,
+        7
+    );
+
+    // The change log names every top-most change, in order.
+    let published: Vec<(ChangeOperation, String)> = recorder
+        .0
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|event| (event.operation, event.rel_path.as_str().to_owned()))
+        .collect();
+    assert_eq!(
+        published,
+        [
+            (ChangeOperation::Delete, "old".to_owned()),
+            (ChangeOperation::Create, "new".to_owned()),
+            (ChangeOperation::Modify, "docs/changed.txt".to_owned()),
+        ]
+    );
+
+    // A second run finds nothing to do.
+    let again = store
+        .reconcile(owner, &RelPath::root(), &[], &disk, false)
+        .await
+        .unwrap();
+    assert!(again.is_empty(), "{again:?}");
+}
+
+#[tokio::test]
+async fn reconcile_of_a_subtree_corrects_sizes_and_leaves_the_rest_alone() {
+    let fixture = fixture().await;
+    let store = &fixture.store;
+    let owner = fixture.owner;
+    store.record_mkdir(owner, &p("a"), 1).await.unwrap();
+    store.record_mkdir(owner, &p("a/b"), 1).await.unwrap();
+    store
+        .record_write(owner, &p("a/b/f.txt"), file_stat(10))
+        .await
+        .unwrap();
+    store
+        .record_write(owner, &p("other.txt"), file_stat(100))
+        .await
+        .unwrap();
+    let a_before = store.get(owner, &p("a")).await.unwrap().unwrap();
+
+    // `a/b` lost its file and got a bigger one; the rest of the tree is not looked at.
+    let ancestors = entries(&[("", None), ("a", None)]);
+    let disk = entries(&[("a/b", None), ("a/b/g.txt", Some(30))]);
+    let report = store
+        .reconcile(owner, &p("a/b"), &ancestors, &disk, false)
+        .await
+        .unwrap();
+    assert_eq!(report.added, [p("a/b/g.txt")]);
+    assert_eq!(report.removed, [p("a/b/f.txt")]);
+    assert!(store.get(owner, &p("other.txt")).await.unwrap().is_some());
+    assert_eq!(store.get(owner, &p("a/b")).await.unwrap().unwrap().size, 30);
+    let a = store.get(owner, &p("a")).await.unwrap().unwrap();
+    assert_eq!(a.size, 30);
+    assert_ne!(a.etag, a_before.etag);
+    assert_eq!(
+        store
+            .get(owner, &RelPath::root())
+            .await
+            .unwrap()
+            .unwrap()
+            .size,
+        130
+    );
+
+    // A scope that disappeared takes its rows along; its ancestors shrink.
+    let report = store
+        .reconcile(owner, &p("a/b"), &ancestors, &[], false)
+        .await
+        .unwrap();
+    assert_eq!(report.removed, [p("a/b")]);
+    assert_eq!(report.removed_rows, 2);
+    assert_eq!(store.get(owner, &p("a")).await.unwrap().unwrap().size, 0);
+    assert_eq!(
+        store
+            .get(owner, &RelPath::root())
+            .await
+            .unwrap()
+            .unwrap()
+            .size,
+        100
+    );
+}
+
+#[tokio::test]
+async fn reconcile_fixes_drifted_directory_sizes() {
+    let fixture = fixture().await;
+    let store = &fixture.store;
+    let owner = fixture.owner;
+    store.record_mkdir(owner, &p("d"), 1).await.unwrap();
+    store
+        .record_write(owner, &p("d/f"), file_stat(8))
+        .await
+        .unwrap();
+    sqlx::query("UPDATE files SET size = 999 WHERE rel_path = 'd'")
+        .execute(store.pool())
+        .await
+        .unwrap();
+    let disk = entries(&[("", None), ("d", None), ("d/f", Some(8))]);
+    let report = store
+        .reconcile(owner, &RelPath::root(), &[], &disk, false)
+        .await
+        .unwrap();
+    assert_eq!(report.resized, 1);
+    assert!(report.added.is_empty() && report.removed.is_empty());
+    assert_eq!(store.get(owner, &p("d")).await.unwrap().unwrap().size, 8);
+}

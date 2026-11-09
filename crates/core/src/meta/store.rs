@@ -24,7 +24,10 @@
 //! All paths are [`RelPath`]s of one owner. Subtree operations select descendants with the
 //! half-open range from [`super::descendant_bounds`], never with `LIKE`.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{BTreeSet, HashMap, HashSet},
+    sync::Arc,
+};
 
 use rand::RngExt as _;
 use sha2::{Digest, Sha256};
@@ -71,6 +74,52 @@ pub struct DiskStat {
     pub mtime_ns: i64,
     /// Length in bytes (ignored for directories).
     pub size: u64,
+}
+
+impl DiskStat {
+    /// What `lstat(2)` (or `stat(2)`) reported. Directories have size 0; modification times
+    /// before the epoch count as 0.
+    pub fn from_metadata(meta: &std::fs::Metadata) -> Self {
+        let mtime_ns = meta.modified().map_or(0, |time| {
+            time.duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |since| {
+                    i64::try_from(since.as_nanos()).unwrap_or(i64::MAX)
+                })
+        });
+        Self {
+            is_dir: meta.is_dir(),
+            mtime_ns,
+            size: if meta.is_dir() { 0 } else { meta.len() },
+        }
+    }
+}
+
+/// What [`MetaStore::reconcile`] changed, or would change in a dry run.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Reconciled {
+    /// New entries, top-most only (their contents are new as well).
+    pub added: Vec<RelPath>,
+    /// Number of rows created, including everything below `added`.
+    pub added_rows: usize,
+    /// Entries that no longer exist, top-most only.
+    pub removed: Vec<RelPath>,
+    /// Number of rows removed, including everything below `removed`.
+    pub removed_rows: usize,
+    /// Files whose size or modification time changed.
+    pub modified: Vec<RelPath>,
+    /// Existing directories whose recorded recursive size was wrong for other reasons than
+    /// the changes above (drift).
+    pub resized: usize,
+}
+
+impl Reconciled {
+    /// Whether nothing had to change.
+    pub fn is_empty(&self) -> bool {
+        self.added.is_empty()
+            && self.removed.is_empty()
+            && self.modified.is_empty()
+            && self.resized == 0
+    }
 }
 
 /// One change of a PROPPATCH, applied in request order (a `remove` followed by a `set` of the
@@ -641,6 +690,215 @@ impl MetaStore {
         tx.commit().await?;
         self.publish(&[event]);
         Ok(top)
+    }
+
+    /// Brings the rows of `scope` and everything below it in line with what is on disk (the
+    /// core of `gono-cloud rescan`), in one transaction.
+    ///
+    /// - `ancestors` are the strict ancestors of `scope` as found on disk (from the root down);
+    ///   missing rows are created for them silently, like [`MetaStore::adopt`].
+    /// - `entries` are `scope` and everything below it on disk; empty when `scope` is gone.
+    ///
+    /// Rows without an entry (or of the wrong kind) are removed, entries without a row get
+    /// one, and files whose size or modification time differ get the ETag the WebDAV layer
+    /// already reports for them ([`derived_file_etag`]). Directory sizes inside `scope` are
+    /// recomputed from the entries, the ancestors of `scope` are adjusted by the difference,
+    /// and every directory above a change gets a new ETag. The change log records the top-most
+    /// added and removed entries and every modified file, so clients and notify_push see the
+    /// changes.
+    ///
+    /// With `dry_run`, the transaction is rolled back: the result says what would change.
+    pub async fn reconcile(
+        &self,
+        owner: i64,
+        scope: &RelPath,
+        ancestors: &[(RelPath, DiskStat)],
+        entries: &[(RelPath, DiskStat)],
+        dry_run: bool,
+    ) -> Result<Reconciled> {
+        let mut tx = db::begin_immediate(&self.pool).await?;
+        let mut report = Reconciled::default();
+        let mut events = Vec::new();
+
+        // The root and the ancestors of the scope are adopted, never reported.
+        let mut known: Vec<(RelPath, DiskStat)> = ancestors.to_vec();
+        if scope.is_root()
+            && let Some(root) = entries.iter().find(|(rel, _)| rel.is_root())
+        {
+            known.push(root.clone());
+        }
+        // Adopted rows start with size 0; correcting that is not drift.
+        let mut adopted: HashSet<RelPath> = HashSet::new();
+        for (rel, stat) in &known {
+            if select(&mut tx, owner, rel).await?.is_none() {
+                insert(&mut tx, owner, rel, *stat, Etag::Derived).await?;
+                adopted.insert(rel.clone());
+            }
+        }
+
+        let rows: HashMap<RelPath, FileRow> = select_subtree(&mut tx, owner, scope)
+            .await?
+            .into_iter()
+            .map(|row| (row.rel_path.clone(), row))
+            .collect();
+        let disk: HashMap<&RelPath, DiskStat> =
+            entries.iter().map(|(rel, stat)| (rel, *stat)).collect();
+        let old_scope_size = rows.get(scope).map_or(0, |row| to_db_size(row.size));
+
+        // Paths whose ancestors need a new ETag.
+        let mut changed: Vec<RelPath> = Vec::new();
+
+        // 1. Rows without a matching entry.
+        let stale: BTreeSet<RelPath> = rows
+            .values()
+            .filter(|row| {
+                disk.get(&row.rel_path)
+                    .is_none_or(|stat| stat.is_dir != row.is_dir)
+            })
+            .map(|row| row.rel_path.clone())
+            .collect();
+        report.removed_rows = stale.len();
+        for rel in &stale {
+            let below_stale = rel.parent().is_some_and(|parent| stale.contains(&parent));
+            if below_stale || rel.is_root() {
+                continue;
+            }
+            delete_subtree(&mut tx, owner, rel).await?;
+            let id = rows[rel].id;
+            events.push(log_change(&mut tx, owner, id, rel, None, ChangeOperation::Delete).await?);
+            report.removed.push(rel.clone());
+            changed.push(rel.clone());
+        }
+
+        // 2. Entries without a row (including those whose row was of the wrong kind).
+        let mut current: HashMap<RelPath, FileRow> = rows
+            .into_iter()
+            .filter(|(rel, _)| !stale.contains(rel))
+            .collect();
+        // `entries` lists parents before children, so a new entry's parent is new exactly when
+        // it was inserted earlier in this loop.
+        let mut new_paths: HashSet<RelPath> = HashSet::new();
+        for (rel, stat) in entries {
+            if current.contains_key(rel) || known.iter().any(|(known, _)| known == rel) {
+                continue;
+            }
+            let row = insert(&mut tx, owner, rel, *stat, Etag::Derived).await?;
+            report.added_rows += 1;
+            let parent_is_new = rel
+                .parent()
+                .is_some_and(|parent| new_paths.contains(&parent));
+            if !parent_is_new || rel == scope {
+                events.push(
+                    log_change(&mut tx, owner, row.id, rel, None, ChangeOperation::Create).await?,
+                );
+                report.added.push(rel.clone());
+                changed.push(rel.clone());
+            }
+            new_paths.insert(rel.clone());
+            current.insert(rel.clone(), row);
+        }
+
+        // 3. Files whose size or time changed.
+        for (rel, stat) in entries.iter().filter(|(_, stat)| !stat.is_dir) {
+            let Some(row) = current.get(rel) else {
+                continue;
+            };
+            if row.mtime_ns == stat.mtime_ns && row.size == stat.size {
+                continue;
+            }
+            let etag = derived_file_etag(row.id, stat.mtime_ns, stat.size);
+            sqlx::query("UPDATE files SET etag = ?2, mtime_ns = ?3, size = ?4 WHERE id = ?1")
+                .bind(row.id)
+                .bind(&etag)
+                .bind(stat.mtime_ns)
+                .bind(to_db_size(stat.size))
+                .execute(&mut *tx)
+                .await?;
+            if !new_paths.contains(rel) {
+                events.push(
+                    log_change(&mut tx, owner, row.id, rel, None, ChangeOperation::Modify).await?,
+                );
+                report.modified.push(rel.clone());
+                changed.push(rel.clone());
+            }
+        }
+
+        // 4. Recursive directory sizes inside the scope, from the entries.
+        let mut sizes: HashMap<RelPath, u64> = entries
+            .iter()
+            .filter(|(_, stat)| stat.is_dir)
+            .map(|(rel, _)| (rel.clone(), 0))
+            .collect();
+        for (rel, stat) in entries.iter().filter(|(_, stat)| !stat.is_dir) {
+            for ancestor in rel.ancestors() {
+                if let Some(size) = sizes.get_mut(&ancestor) {
+                    *size += stat.size;
+                }
+            }
+        }
+        // Directories above a reported change get a new ETag (and their new size is explained
+        // by that change); any other size difference is drift.
+        let mut bump: BTreeSet<RelPath> = changed.iter().flat_map(RelPath::ancestors).collect();
+        let explained = bump.clone();
+        for (rel, size) in &sizes {
+            let Some(row) = current.get(rel) else {
+                continue;
+            };
+            if row.size == *size {
+                continue;
+            }
+            sqlx::query("UPDATE files SET size = ?2 WHERE id = ?1")
+                .bind(row.id)
+                .bind(to_db_size(*size))
+                .execute(&mut *tx)
+                .await?;
+            if !new_paths.contains(rel) && !adopted.contains(rel) && !explained.contains(rel) {
+                report.resized += 1;
+                bump.insert(rel.clone());
+                bump.extend(rel.ancestors());
+            }
+        }
+
+        // 5. The ancestors of the scope follow the scope's new total.
+        let new_scope_size = match disk.get(scope) {
+            Some(stat) if stat.is_dir => sizes.get(scope).copied().map_or(0, to_db_size),
+            Some(stat) => to_db_size(stat.size),
+            None => 0,
+        };
+        let delta = new_scope_size - old_scope_size;
+        if delta != 0 {
+            bump.extend(scope.ancestors());
+        }
+        for ancestor in scope.ancestors() {
+            sqlx::query(
+                "UPDATE files SET size = max(size + ?3, 0) WHERE owner_id = ?1 AND rel_path = ?2",
+            )
+            .bind(owner)
+            .bind(ancestor.as_str())
+            .bind(delta)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        // 6. New ETags for every directory above a change.
+        for dir in &bump {
+            sqlx::query(
+                "UPDATE files SET etag = ?3 WHERE owner_id = ?1 AND rel_path = ?2 AND is_dir = 1",
+            )
+            .bind(owner)
+            .bind(dir.as_str())
+            .bind(dir_etag())
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        if dry_run {
+            tx.rollback().await?;
+        } else {
+            tx.commit().await?;
+            self.publish(&events);
+        }
+        Ok(report)
     }
 
     /// Sets or clears the favorite flag. Favorites are not content, so ETags stay the same.

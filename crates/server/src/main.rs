@@ -21,10 +21,7 @@ use std::process::ExitCode;
 
 use clap::Parser;
 
-use crate::{
-    cli::{Cli, Command, ConfigCommand},
-    commands::not_implemented,
-};
+use crate::cli::{Cli, Command, ConfigCommand};
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -46,6 +43,6 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Config(ConfigCommand::Check) => commands::config_check::run(config),
         Command::User(command) => commands::user::run(config, command).await,
         Command::AppPassword(command) => commands::app_password::run(config, command).await,
-        Command::Rescan(_) => not_implemented("rescan"),
+        Command::Rescan(args) => commands::rescan::run(config, args).await,
     }
 }

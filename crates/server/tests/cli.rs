@@ -251,13 +251,133 @@ fn serve_requires_an_initialized_database() {
     );
 }
 
-#[test]
-fn unimplemented_commands_fail_cleanly() {
+/// Rows of the admin's `files` table, as `(rel_path, size)`, ordered by path.
+async fn file_rows(instance: &Instance) -> Vec<(String, i64)> {
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", instance.db().display()))
+        .await
+        .unwrap();
+    let rows =
+        sqlx::query_as("SELECT rel_path, size FROM files WHERE owner_id = 1 ORDER BY rel_path")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    pool.close().await;
+    rows
+}
+
+#[tokio::test]
+async fn rescan_reconciles_changes_made_behind_the_servers_back() {
     let instance = Instance::new();
     assert!(instance.init().status.success());
-    let output = run(&mut instance.command(&["rescan", "--all"]));
-    assert_eq!(output.status.code(), Some(1));
-    assert!(text(&output.stderr).contains("not implemented yet"));
+    let files = instance.dir.path().join("data/files/1");
+    std::fs::create_dir_all(files.join("docs")).unwrap();
+    std::fs::write(files.join("docs/a.txt"), "hello").unwrap();
+    std::fs::write(files.join("Cafe\u{301}.txt"), "nfd").unwrap();
+
+    let dry = run(&mut instance.command(&["rescan", "admin", "--dry-run"]));
+    assert!(dry.status.success(), "{}", text(&dry.stderr));
+    let report = text(&dry.stdout);
+    assert!(report.contains("Dry run"), "{report}");
+    assert!(
+        report.contains("would rename to NFC: /Caf\u{e9}.txt"),
+        "{report}"
+    );
+    assert!(report.contains("would add:    /docs"), "{report}");
+    assert!(
+        file_rows(&instance).await.is_empty(),
+        "a dry run changes nothing"
+    );
+    assert!(
+        std::fs::read_dir(&files)
+            .unwrap()
+            .any(|entry| entry.unwrap().file_name() == "Cafe\u{301}.txt")
+    );
+
+    let done = run(&mut instance.command(&["rescan", "admin"]));
+    assert!(done.status.success(), "{}", text(&done.stderr));
+    let report = text(&done.stdout);
+    assert!(
+        report.contains("renamed to NFC:   /Caf\u{e9}.txt"),
+        "{report}"
+    );
+    assert_eq!(
+        file_rows(&instance).await,
+        [
+            (String::new(), 8),
+            ("Caf\u{e9}.txt".to_owned(), 3),
+            ("docs".to_owned(), 5),
+            ("docs/a.txt".to_owned(), 5),
+        ]
+    );
+    let again = run(&mut instance.command(&["rescan", "--all"]));
+    assert!(text(&again.stdout).contains("Everything was up to date."));
+
+    std::fs::remove_file(files.join("docs/a.txt")).unwrap();
+    let scoped = run(&mut instance.command(&["rescan", "admin", "--path", "/docs"]));
+    assert!(scoped.status.success(), "{}", text(&scoped.stderr));
+    assert!(text(&scoped.stdout).contains("removed:  /docs/a.txt"));
+    assert_eq!(file_rows(&instance).await[0], (String::new(), 3));
+
+    let missing = run(&mut instance.command(&["rescan", "admin", "--path", "/nope"]));
+    assert_eq!(missing.status.code(), Some(1));
+    assert!(text(&missing.stderr).contains("does not exist"));
+}
+
+/// The next text frame within ten seconds (pings are answered while reading).
+#[cfg(unix)]
+async fn next_text(
+    socket: &mut tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >,
+) -> Option<String> {
+    use futures_util::StreamExt as _;
+    use tokio_tungstenite::tungstenite::Message;
+    loop {
+        match tokio::time::timeout(Duration::from_secs(10), socket.next()).await {
+            Ok(Some(Ok(Message::Text(text)))) => return Some(text.to_string()),
+            Ok(Some(Ok(_))) => {}
+            _ => return None,
+        }
+    }
+}
+
+/// A rescan run next to the server reaches notify_push clients through the change log.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn rescan_changes_are_pushed_by_a_running_server() {
+    use futures_util::SinkExt as _;
+    use tokio_tungstenite::tungstenite::Message;
+
+    let instance = Instance::new();
+    assert!(instance.init().status.success());
+    let add = run(&mut instance.command(&["app-password", "add", "admin", "--label", "push"]));
+    let password = app_password_from(&add);
+    let mut child = instance
+        .command(&["serve"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let addr = instance.addr;
+    wait_for_health(&mut child, addr);
+
+    let (mut socket, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/push/ws"))
+        .await
+        .unwrap();
+    socket.send(Message::text("admin")).await.unwrap();
+    socket.send(Message::text(password)).await.unwrap();
+    assert_eq!(
+        next_text(&mut socket).await.as_deref(),
+        Some("authenticated")
+    );
+
+    std::fs::write(instance.dir.path().join("data/files/1/dropped.txt"), "x").unwrap();
+    let rescan = run(&mut instance.command(&["rescan", "admin"]));
+    assert!(rescan.status.success(), "{}", text(&rescan.stderr));
+    assert_eq!(next_text(&mut socket).await.as_deref(), Some("notify_file"));
+
+    child.kill().unwrap();
+    child.wait().unwrap();
 }
 
 /// Extracts the value of the `App password: <value>` line.

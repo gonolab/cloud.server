@@ -4,6 +4,7 @@ pub mod app_password;
 pub mod config_check;
 pub mod init;
 pub(crate) mod output;
+pub mod rescan;
 pub mod serve;
 pub mod user;
 
@@ -43,10 +44,4 @@ async fn open_database(config_path: &Path) -> anyhow::Result<(Config, Pool)> {
         .await
         .context("apply database migrations")?;
     Ok((config, pool))
-}
-
-/// Placeholder result of subcommands whose arguments are defined but whose behavior is not
-/// implemented yet.
-pub fn not_implemented(command: &str) -> anyhow::Result<()> {
-    bail!("`gono-cloud {command}` is not implemented yet")
 }

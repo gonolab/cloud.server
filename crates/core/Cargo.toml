@@ -22,6 +22,9 @@ tracing.workspace = true
 unicode-normalization.workspace = true
 url.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+rustix.workspace = true
+
 [dev-dependencies]
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }

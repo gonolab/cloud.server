@@ -47,7 +47,11 @@ pub enum Command {
     /// Re-read files that were changed directly in the data directory.
     ///
     /// The data directory belongs to the server. After changing files behind its back (SSH,
-    /// Samba, rsync, ...), run this command so that clients see the changes.
+    /// Samba, rsync, ...), run this command so that clients see the changes: entries that
+    /// appeared get metadata, entries that disappeared lose it, changed files get new ETags,
+    /// folder sizes are recomputed, and names that are not Unicode NFC are renamed to NFC
+    /// (never over an existing entry). The changes are logged, so clients and notify_push
+    /// pick them up. It may run while the server is running.
     Rescan(RescanArgs),
 }
 
@@ -188,6 +192,10 @@ pub struct RescanArgs {
     /// Rescan every account.
     #[arg(long)]
     pub all: bool,
+
+    /// Report what would change without changing anything.
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 /// One `--scope <MOUNT>=<STORAGE>:<view|full>` argument.
@@ -350,6 +358,7 @@ mod tests {
         assert!(parse(&["rescan", "--all", "--path", "/Photos"]).is_err());
         assert!(parse(&["rescan", "--all"]).is_ok());
         assert!(parse(&["rescan", "alice", "--path", "Photos/2024"]).is_ok());
+        assert!(parse(&["rescan", "--all", "--dry-run"]).is_ok());
     }
 
     #[test]

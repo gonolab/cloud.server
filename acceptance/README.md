@@ -46,6 +46,17 @@ listed test passes, or (with `RUN_LITMUS=1`) when litmus is missing or fails. li
 | `RUN_LITMUS=1` | Also run litmus; fails when it is not installed. |
 | `LITMUS=<path>` | `litmus` binary to use instead of the one on `PATH` (set `TESTROOT` too for an uninstalled build). |
 | `KEEP_WORK_DIR=1` | Keep the temporary config, data directory, and logs. |
+| `SERVER_PORT=<port>` | Loopback port of the server instead of a free one. |
+| `PUBLIC_URL=<url>` | Public origin (`base_url`) that the suite and litmus use instead of the server's own address: a reverse proxy forwarding to `127.0.0.1:SERVER_PORT`. |
+
+To test a reverse proxy configuration, start the proxy so that it forwards a local port to
+`SERVER_PORT`, then run the suite through it; the notify_push tests connect to the WebSocket
+URL the capabilities advertise, which is built from `PUBLIC_URL`, so they go through the proxy
+as well:
+
+```sh
+SERVER_PORT=18091 PUBLIC_URL=http://127.0.0.1:18090 RUN_LITMUS=1 acceptance/scripts/run-new.sh
+```
 
 Against the legacy server, with everything set up and torn down automatically:
 

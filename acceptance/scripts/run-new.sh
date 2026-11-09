@@ -17,6 +17,11 @@
 #                          when litmus is not installed or reports a failure
 #   LITMUS=<path>          litmus binary to use instead of the one on PATH
 #   KEEP_WORK_DIR=1        keep the temporary config, data, and logs for inspection
+#   SERVER_PORT=<port>     loopback port for the server (default: a free one)
+#   PUBLIC_URL=<url>       the server's public origin (`base_url`), which the suite and litmus
+#                          use instead of the server's own address; for testing a reverse
+#                          proxy that forwards PUBLIC_URL to 127.0.0.1:SERVER_PORT (see
+#                          docs/reverse-proxy.md)
 set -Eeuo pipefail
 
 ACCEPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -28,7 +33,7 @@ MODE="test"
 CARGO_TEST_ARGS=()
 
 usage() {
-  sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,25p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 while (($#)); do
@@ -139,7 +144,7 @@ random_password() {
 
 wait_for_server() {
   for _ in $(seq 1 200); do
-    if curl -fsS "${BASE_URL}/healthz" >/dev/null 2>&1; then
+    if curl -fsS "${SERVER_URL}/healthz" >/dev/null 2>&1; then
       return 0
     fi
     if ! kill -0 "${SERVER_PID}" 2>/dev/null; then
@@ -178,8 +183,11 @@ CARGO_TARGET_DIR="${TARGET_DIR}" cargo build --quiet --manifest-path "${REPO_ROO
   -p gono-server --bin gono-cloud
 BIN="${TARGET_DIR}/debug/gono-cloud"
 
-PORT="$(find_port)"
-BASE_URL="http://127.0.0.1:${PORT}"
+PORT="${SERVER_PORT:-$(find_port)}"
+SERVER_URL="http://127.0.0.1:${PORT}"
+# Everything a client sees goes through PUBLIC_URL when it is set.
+BASE_URL="${PUBLIC_URL:-${SERVER_URL}}"
+BASE_URL="${BASE_URL%/}"
 
 cat >"${CONFIG_FILE}" <<EOF
 [server]
@@ -216,11 +224,15 @@ SCOPED_PASSWORD="$(mint_app_password gono --label acceptance-scoped \
   --scope /acc-full=/acc-scope/full:full)"
 USER2_PASSWORD="$(mint_app_password alice --label acceptance-full)"
 
-echo "==> starting gono-cloud on ${BASE_URL}"
+echo "==> starting gono-cloud on ${SERVER_URL} (public URL ${BASE_URL})"
 # Started directly (not through the `gono` function) so that $! is the server itself.
 "${BIN}" --config "${CONFIG_FILE}" serve >"${STDOUT_LOG}" 2>&1 &
 SERVER_PID="$!"
 wait_for_server
+if [[ "${BASE_URL}" != "${SERVER_URL}" ]] && ! curl -fsS "${BASE_URL}/healthz" >/dev/null; then
+  echo "the server does not answer through ${BASE_URL}; is the proxy running?" >&2
+  exit 1
+fi
 
 export GONO_ACCEPT_BASE_URL="${BASE_URL}"
 export GONO_ACCEPT_USER="gono"

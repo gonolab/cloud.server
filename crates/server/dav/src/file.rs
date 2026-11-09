@@ -37,7 +37,7 @@ impl fmt::Debug for ReadFile {
 
 impl DavFile for ReadFile {
     fn metadata(&mut self) -> FsFuture<'_, Box<dyn DavMetaData>> {
-        let meta: Box<dyn DavMetaData> = Box::new(DavMeta::new(self.entry.clone(), false));
+        let meta: Box<dyn DavMetaData> = Box::new(DavMeta::new(self.entry.clone()));
         std::future::ready(Ok(meta)).boxed()
     }
 
@@ -187,7 +187,7 @@ impl DavFile for WriteFile {
             .committed
             .clone()
             .map_or(Err(FsError::NotFound), |entry| {
-                Ok(Box::new(DavMeta::new(entry, false)) as Box<dyn DavMetaData>)
+                Ok(Box::new(DavMeta::new(entry)) as Box<dyn DavMetaData>)
             });
         std::future::ready(result).boxed()
     }
@@ -238,7 +238,7 @@ pub struct CreatedFile {
 
 impl DavFile for CreatedFile {
     fn metadata(&mut self) -> FsFuture<'_, Box<dyn DavMetaData>> {
-        let meta: Box<dyn DavMetaData> = Box::new(DavMeta::new(self.entry.clone(), false));
+        let meta: Box<dyn DavMetaData> = Box::new(DavMeta::new(self.entry.clone()));
         std::future::ready(Ok(meta)).boxed()
     }
 

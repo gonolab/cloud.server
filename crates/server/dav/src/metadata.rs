@@ -2,15 +2,10 @@
 //!
 //! Every entry is described by an [`Entry`], built once from the disk and the `files` row, and
 //! handed to dav-server wrapped in [`DavMeta`]. All methods report the **same** ETag:
-//!
-//! - dav-server puts `DavMetaData::etag()` into the `ETag` header of GET, HEAD and PUT and into
-//!   the If-Match/If-None-Match comparisons, adding the quotes itself;
-//! - it puts the same value into PROPFIND's `DAV:getetag` verbatim.
-//!
-//! RFC 4918 defines `getetag` as a quoted entity tag, as Nextcloud reports it, so during
-//! PROPFIND (where no conditional headers are evaluated) [`DavMeta::etag`] returns the value
-//! with quotes, and without them everywhere else. The result is one quoted ETag on every
-//! interface, and dav-server's XML is never touched.
+//! [`DavMeta::etag`] returns it without quotes, and dav-server adds them wherever it emits it
+//! (the `ETag` header of GET, HEAD and PUT, the If-Match/If-None-Match comparisons and
+//! PROPFIND's `DAV:getetag`, a quoted entity tag as RFC 4918 and Nextcloud have it). The result
+//! is one quoted ETag on every interface, and dav-server's XML is never touched.
 
 use std::{
     sync::Arc,
@@ -75,13 +70,12 @@ pub fn ns_from_time(time: SystemTime) -> i64 {
 #[derive(Debug, Clone)]
 pub struct DavMeta {
     entry: Arc<Entry>,
-    quoted_etag: bool,
 }
 
 impl DavMeta {
-    /// Wraps an entry. `quoted_etag` is set while handling PROPFIND (see the module docs).
-    pub fn new(entry: Arc<Entry>, quoted_etag: bool) -> Self {
-        Self { entry, quoted_etag }
+    /// Wraps an entry.
+    pub fn new(entry: Arc<Entry>) -> Self {
+        Self { entry }
     }
 
     /// The described entry.
@@ -103,11 +97,13 @@ impl DavMetaData for DavMeta {
         self.entry.is_dir()
     }
 
+    /// Without quotes; dav-server adds them (see the module docs).
     fn etag(&self) -> Option<String> {
-        Some(if self.quoted_etag {
-            format!("\"{}\"", self.entry.etag)
-        } else {
-            self.entry.etag.clone()
-        })
+        Some(self.entry.etag.clone())
+    }
+
+    /// Lookups treat symbolic links as missing, so no entry is ever a link.
+    fn is_symlink(&self) -> bool {
+        false
     }
 }

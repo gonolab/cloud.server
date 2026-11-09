@@ -8,10 +8,10 @@
 //!   names that are not NFC are hidden (they cannot be addressed, see [`gono_server_core::path`]).
 //! - **Permissions**: every write checks the mount's permission. Virtual collections and mount
 //!   roots can be neither written nor deleted nor renamed.
-//! - **Metadata**: entries are reported as [`Entry`]s through [`DavMeta`] (one quoted ETag on
-//!   every interface), and every change is recorded by the [`MetaStore`] right after the disk
-//!   operation. The disk operation and its metadata update run in a detached task, so a client
-//!   that disconnects mid-request cannot leave a change unrecorded.
+//! - **Metadata**: entries are reported as [`Entry`]s through [`DavMeta`], and every change is
+//!   recorded by the [`MetaStore`] right after the disk operation. The disk operation and its
+//!   metadata update run in a detached task, so a client that disconnects mid-request cannot
+//!   leave a change unrecorded.
 //!
 //! # Whole-subtree operations
 //!
@@ -1166,13 +1166,12 @@ impl GuardedFileSystem<Ctx> for ScopedFs {
                 Location::Virtual { client } => self.list_virtual(ctx, client).await?,
                 Location::Storage { .. } => self.list_storage(ctx, &location).await?,
             };
-            let quoted = is_method(ctx, "PROPFIND");
             let items: Vec<FsResult<Box<dyn DavDirEntry>>> = entries
                 .into_iter()
                 .map(|(name, entry)| {
                     Ok(Box::new(DirEntry {
                         name,
-                        meta: DavMeta::new(entry, quoted),
+                        meta: DavMeta::new(entry),
                     }) as Box<dyn DavDirEntry>)
                 })
                 .collect();
@@ -1193,11 +1192,20 @@ impl GuardedFileSystem<Ctx> for ScopedFs {
             {
                 ctx.set_outcome(entry.clone());
             }
-            let meta: Box<dyn DavMetaData> =
-                Box::new(DavMeta::new(entry, is_method(ctx, "PROPFIND")));
+            let meta: Box<dyn DavMetaData> = Box::new(DavMeta::new(entry));
             Ok(meta)
         }
         .boxed()
+    }
+
+    /// Same as [`metadata`](Self::metadata): lookups treat symbolic links as missing, so no
+    /// entry is ever a link.
+    fn symlink_metadata<'a>(
+        &'a self,
+        path: &'a DavPath,
+        ctx: &'a Ctx,
+    ) -> FsFuture<'a, Box<dyn DavMetaData>> {
+        self.metadata(path, ctx)
     }
 
     fn create_dir<'a>(&'a self, path: &'a DavPath, ctx: &'a Ctx) -> FsFuture<'a, ()> {

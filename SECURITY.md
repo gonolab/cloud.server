@@ -34,8 +34,8 @@ the advisory is published.
 In scope: the server (`crates/server/`), its release archives, the install script and the
 service files (`packaging/server/`), and the release workflow.
 
-Problems in a dependency are welcome too. If the problem is in dav-server, which this
-repository vendors with a patch (`vendor/dav-server/`), report it to the
+Problems in a dependency are welcome too. If the problem is in dav-server, which handles
+every WebDAV request, report it to the
 [dav-server-rs project](https://github.com/messense/dav-server-rs) as well. Problems in the
 Nextcloud clients belong to the [Nextcloud projects](https://github.com/nextcloud).
 

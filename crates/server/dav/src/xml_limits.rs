@@ -12,7 +12,8 @@
 //! that rely on this check:
 //!
 //! - dav-server: `PROPFIND`, `PROPPATCH` and `LOCK` bodies, and the dead properties and lock
-//!   owners it stores from them and parses again later;
+//!   owners it stores from them and parses again later. Since 0.12.0 dav-server also refuses
+//!   bodies and stored property XML nested deeper than 64 levels itself (GHSA-jj29-x8v4-w733);
 //! - [`crate::ctx::PropfindKind::of_body`] (`PROPFIND`);
 //! - [`crate::report`] (`REPORT`);
 //! - the `PROPFIND` of the chunked upload namespace (`gono-server-nextcloud`).

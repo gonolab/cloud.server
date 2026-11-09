@@ -27,7 +27,6 @@ other's way.
 │                           install script, the packing script and the install test
 ├── acceptance/             Black-box HTTP acceptance suite, its own workspace (see its README)
 ├── docs/                   Operator and project documentation
-├── vendor/dav-server/      Patched copy of dav-server (see its VENDORED.md)
 └── .github/workflows/      ci.yml (checks, tests, install test) and release-server.yml
 ```
 

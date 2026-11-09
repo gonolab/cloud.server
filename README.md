@@ -75,8 +75,6 @@ Licensed under either of
 
 at your option.
 
-`vendor/dav-server` is a patched copy of dav-server (Apache-2.0); see its `VENDORED.md`.
-
 Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in
 this project by you, as defined in the Apache-2.0 license, shall be dual licensed as above,
 without any additional terms or conditions.

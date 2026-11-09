@@ -27,7 +27,7 @@ pub enum PropfindKind {
 ///
 /// dav-server hands the file system single paths. A few operations need more context: the
 /// collection COPY is performed as one subtree copy (see [`crate::fs`]), the PUT applies
-/// `X-OC-MTime`, PROPFIND reports quoted ETags and lists dead properties only for `allprop`.
+/// `X-OC-MTime`, PROPFIND lists dead properties only for `allprop`.
 #[derive(Debug, Clone)]
 pub struct RequestInfo {
     /// HTTP method.

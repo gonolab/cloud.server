@@ -12,7 +12,7 @@
 //! `OC-FileId` and `X-NC-Permissions` headers, and every request is logged once with secrets
 //! removed from its target ([`crate::request_log`]).
 
-use std::{net::SocketAddr, sync::Arc};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use axum::{
     Router,
@@ -77,30 +77,48 @@ async fn healthz(State(state): State<AppState>) -> (StatusCode, &'static str) {
     }
 }
 
-/// Authenticates a request, or produces the 401/429 response.
+/// Why a request was not authenticated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Rejection {
+    /// Missing or wrong credentials: 401 with a Basic challenge.
+    Unauthorized,
+    /// Too many failed attempts: 429 with `Retry-After`.
+    RateLimited(Duration),
+}
+
+impl IntoResponse for Rejection {
+    fn into_response(self) -> Response {
+        match self {
+            Self::Unauthorized => {
+                let mut response = StatusCode::UNAUTHORIZED.into_response();
+                response
+                    .headers_mut()
+                    .insert(header::WWW_AUTHENTICATE, basic_challenge());
+                response
+            }
+            Self::RateLimited(wait) => {
+                let mut response = StatusCode::TOO_MANY_REQUESTS.into_response();
+                let seconds = wait.as_secs().max(1).to_string();
+                if let Ok(value) = HeaderValue::from_str(&seconds) {
+                    response.headers_mut().insert(header::RETRY_AFTER, value);
+                }
+                response
+            }
+        }
+    }
+}
+
+/// Authenticates a request.
 async fn authenticate(
     state: &AppState,
     peer: SocketAddr,
     headers: &HeaderMap,
-) -> Result<Arc<Identity>, Response> {
+) -> Result<Arc<Identity>, Rejection> {
     let client = client_ip(peer.ip(), headers, &state.trusted_proxies);
     match state.auth.authenticate(client, headers).await {
         AuthOutcome::Authenticated(identity) => Ok(identity),
-        AuthOutcome::Missing | AuthOutcome::Invalid => {
-            let mut response = StatusCode::UNAUTHORIZED.into_response();
-            response
-                .headers_mut()
-                .insert(header::WWW_AUTHENTICATE, basic_challenge());
-            Err(response)
-        }
-        AuthOutcome::RateLimited(wait) => {
-            let mut response = StatusCode::TOO_MANY_REQUESTS.into_response();
-            let seconds = wait.as_secs().max(1).to_string();
-            if let Ok(value) = HeaderValue::from_str(&seconds) {
-                response.headers_mut().insert(header::RETRY_AFTER, value);
-            }
-            Err(response)
-        }
+        AuthOutcome::Missing | AuthOutcome::Invalid => Err(Rejection::Unauthorized),
+        AuthOutcome::RateLimited(wait) => Err(Rejection::RateLimited(wait)),
     }
 }
 
@@ -139,7 +157,7 @@ async fn files(
 ) -> Response {
     let identity = match authenticate(&state, peer, request.headers()).await {
         Ok(identity) => identity,
-        Err(response) => return response,
+        Err(rejection) => return rejection.into_response(),
     };
     if url_user(request.uri().path(), FILES_ROOT).as_deref() != Some(identity.username.as_str()) {
         return StatusCode::FORBIDDEN.into_response();
@@ -155,7 +173,7 @@ async fn webdav(
 ) -> Response {
     match authenticate(&state, peer, request.headers()).await {
         Ok(identity) => state.dav.handle(identity, request).await.map(Body::new),
-        Err(response) => response,
+        Err(rejection) => rejection.into_response(),
     }
 }
 
@@ -167,7 +185,7 @@ async fn uploads(
 ) -> Response {
     let identity = match authenticate(&state, peer, request.headers()).await {
         Ok(identity) => identity,
-        Err(response) => return response,
+        Err(rejection) => return rejection.into_response(),
     };
     let own = url_user(request.uri().path(), "/remote.php/dav/uploads/").as_deref()
         == Some(identity.username.as_str());

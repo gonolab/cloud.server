@@ -715,8 +715,27 @@ dependencies = [
 name = "gono-dav"
 version = "1.0.0-dev"
 dependencies = [
+ "bytes",
  "dav-server",
+ "futures-util",
  "gono-core",
+ "http",
+ "http-body",
+ "http-body-util",
+ "libc",
+ "pin-project-lite",
+ "rand",
+ "rustix",
+ "sha2 0.11.1",
+ "sqlx",
+ "tempfile",
+ "tokio",
+ "tower-layer",
+ "tower-service",
+ "tracing",
+ "url",
+ "uuid",
+ "xmltree",
 ]
 
 [[package]]

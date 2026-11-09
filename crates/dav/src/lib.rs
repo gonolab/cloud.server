@@ -12,9 +12,15 @@
 //!
 //! All metadata writes go through the `MetaStore` (see [`gono_core::meta`]).
 
+pub mod ctx;
+mod file;
 pub mod fs;
 pub mod identity;
 pub mod locks;
 pub mod metadata;
+pub mod props;
+pub mod resolve;
 
+pub use ctx::{Ctx, PropfindKind, RequestInfo};
+pub use fs::ScopedFs;
 pub use identity::{Identity, Mount};

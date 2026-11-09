@@ -1195,7 +1195,10 @@ impl<C: Clone + Send + Sync + 'static> PropWriter<C> {
             let res = self
                 .build_prop(p, path, &*meta, &mut qc, do_content)
                 .await?;
-            if res.status == StatusCode::OK {
+            // GONO PATCH: properties requested by name that do not exist must be reported
+            // in a 404 propstat (RFC 4918, 9.1); upstream drops them. `allprop` and
+            // `propname` still list only what exists.
+            if res.status == StatusCode::OK || self.name == "prop" {
                 add_sc_elem(&mut props, res.status, res.element);
             }
         }

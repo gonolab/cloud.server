@@ -154,6 +154,29 @@ async fn dead_props_are_listed_only_when_asked_for() {
 }
 
 #[tokio::test]
+async fn missing_props_are_reported_as_404() {
+    let h = Harness::new().await;
+    let full = h.full();
+    h.put(&full, "props.txt", "x").await.expect(201);
+    let ask = r#"<?xml version="1.0"?><d:propfind xmlns:d="DAV:" xmlns:x="urn:test" xmlns:oc="http://owncloud.org/ns"><d:prop><x:never-set/><oc:fileid/></d:prop></d:propfind>"#;
+    let response = h
+        .send(&full, "PROPFIND", "props.txt", &[("Depth", "0")], ask)
+        .await;
+    let entries = response.multistatus();
+    let props = entries.values().next().unwrap();
+    assert_eq!(props["{urn:test}never-set"].0, 404);
+    assert_eq!(props[&oc("fileid")].0, 200);
+
+    let all = h
+        .send(&full, "PROPFIND", "props.txt", &[("Depth", "0")], "")
+        .await;
+    assert!(
+        !all.text().contains("404"),
+        "allprop lists only what exists"
+    );
+}
+
+#[tokio::test]
 async fn read_only_scopes_refuse_every_write() {
     let h = Harness::new().await;
     let full = h.full();

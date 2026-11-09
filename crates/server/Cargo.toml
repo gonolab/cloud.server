@@ -1,0 +1,33 @@
+[package]
+name = "gono-server"
+description = "The gono-cloud binary: command line interface, HTTP routing and startup."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "gono-cloud"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+clap.workspace = true
+gono-core.workspace = true
+gono-dav.workspace = true
+gono-nextcloud.workspace = true
+rpassword.workspace = true
+secrecy.workspace = true
+tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tracing.workspace = true
+tracing-appender.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -37,6 +37,9 @@ pub struct Config {
     pub storage: StorageConfig,
     /// `[db]`: the SQLite metadata database.
     pub db: DbConfig,
+    /// `[webdav]`: WebDAV protocol limits.
+    #[serde(default)]
+    pub webdav: WebdavConfig,
     /// `[logging]`: log level and destination.
     #[serde(default)]
     pub logging: LoggingConfig,
@@ -103,6 +106,26 @@ pub struct DbConfig {
 /// Highest accepted value of `db.max_connections`. SQLite serializes writers anyway; a large
 /// pool only adds contention.
 pub const MAX_DB_CONNECTIONS: u32 = 64;
+
+/// `[webdav]` table.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct WebdavConfig {
+    /// Longest lifetime of a WebDAV lock, in seconds. Requests for longer locks, including
+    /// `Timeout: Infinite`, are clamped to it, so locks of vanished clients always expire.
+    pub max_lock_timeout_secs: u64,
+}
+
+impl Default for WebdavConfig {
+    fn default() -> Self {
+        Self {
+            max_lock_timeout_secs: 3600,
+        }
+    }
+}
+
+/// Highest accepted value of `webdav.max_lock_timeout_secs` (one week).
+pub const MAX_LOCK_TIMEOUT_SECS: u64 = 7 * 24 * 3600;
 
 /// `[logging]` table.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -327,6 +350,14 @@ impl Config {
             reject("db.busy_timeout_secs", "must be greater than 0".to_owned());
         }
 
+        // [webdav]
+        if !(1..=MAX_LOCK_TIMEOUT_SECS).contains(&self.webdav.max_lock_timeout_secs) {
+            reject(
+                "webdav.max_lock_timeout_secs",
+                format!("must be between 1 and {MAX_LOCK_TIMEOUT_SECS} (one week)"),
+            );
+        }
+
         // [logging]
         if self
             .logging
@@ -462,6 +493,7 @@ mod tests {
         assert!(config.server.trusted_proxies.is_empty());
         assert_eq!(config.db.max_connections, 8);
         assert_eq!(config.db.busy_timeout_secs, 5);
+        assert_eq!(config.webdav.max_lock_timeout_secs, 3600);
         assert_eq!(config.logging.level, LogLevel::Info);
         assert_eq!(config.logging.file, None, "logs go to stdout by default");
         assert!(config.notify_push.enabled);
@@ -665,6 +697,14 @@ mod tests {
             issue_keys(&config),
             ["storage.data_dir", "db.path", "logging.file"]
         );
+    }
+
+    #[test]
+    fn lock_timeout_is_bounded() {
+        for (value, ok) in [(0, false), (1, true), (604_800, true), (604_801, false)] {
+            let raw = format!("{MINIMAL}\n[webdav]\nmax_lock_timeout_secs = {value}");
+            assert_eq!(issue_keys(&parse(&raw)).is_empty(), ok, "{value}");
+        }
     }
 
     #[test]

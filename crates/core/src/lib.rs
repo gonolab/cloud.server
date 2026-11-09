@@ -10,12 +10,14 @@
 //! - [`password`]: hashing of web login passwords.
 //! - [`users`]: user account storage.
 //! - [`app_passwords`]: device credentials and their mount scopes.
+//! - [`locks`]: persistent WebDAV locks.
 //! - [`error`]: the domain error types.
 
 pub mod app_passwords;
 pub mod config;
 pub mod db;
 pub mod error;
+pub mod locks;
 pub mod meta;
 pub mod password;
 pub mod path;

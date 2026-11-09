@@ -51,6 +51,12 @@ max_connections = 8
 # Seconds a connection waits for a competing writer before failing. Default: 5.
 busy_timeout_secs = 5
 
+[webdav]
+# Longest lifetime of a WebDAV lock, in seconds, 1 to 604800. Clients refresh locks they still
+# need; longer requests, including "Timeout: Infinite", are clamped to this value so that locks
+# of crashed clients expire. Default: 3600.
+max_lock_timeout_secs = 3600
+
 [logging]
 # Minimum level of Gono Cloud's own log events: "error", "warn", "info", "debug" or "trace".
 # Dependencies only log warnings and errors. The GONO_CLOUD_LOG environment variable overrides

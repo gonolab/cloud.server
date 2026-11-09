@@ -243,6 +243,20 @@ impl Harness {
         headers: &[(&str, &str)],
         body: impl Into<Bytes>,
     ) -> Response {
+        self.send_via(&self.handler, identity, method, rel, headers, body)
+            .await
+    }
+
+    /// Like [`Harness::send`], through another handler over the same file system.
+    pub async fn send_via(
+        &self,
+        handler: &DavHandler<Ctx>,
+        identity: &Arc<Identity>,
+        method: &str,
+        rel: &str,
+        headers: &[(&str, &str)],
+        body: impl Into<Bytes>,
+    ) -> Response {
         let body: Bytes = body.into();
         let mut request = Request::builder()
             .method(http::Method::from_bytes(method.as_bytes()).unwrap())
@@ -262,11 +276,13 @@ impl Harness {
         }
         let ctx = Ctx::new(identity.clone(), info);
         let request = Request::from_parts(parts, body_full);
-        let response = self
-            .handler
-            .handle_guarded(request, identity.username.to_string(), ctx.clone())
-            .await;
+        let response = gono_dav::locks::with_ctx(
+            ctx.clone(),
+            handler.handle_guarded(request, identity.username.to_string(), ctx.clone()),
+        )
+        .await;
         let (parts, body) = response.into_parts();
+        let body = gono_dav::locks::CtxBody::new(ctx.clone(), body);
         let body = body.collect().await.unwrap().to_bytes();
         Response {
             status: parts.status,

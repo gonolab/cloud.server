@@ -8,7 +8,7 @@
 //! - [`fs`]: `ScopedFs`, the `GuardedFileSystem<Ctx>` implementation (path mapping, virtual
 //!   directories, permission checks).
 //! - [`metadata`]: the `DavMetaData` wrapper that gives every entry a single ETag source.
-//! - [`locks`]: the persistent `DavLockSystem`.
+//! - [`locks`]: the persistent `DavLockSystem`, keyed by storage path.
 //!
 //! All metadata writes go through the `MetaStore` (see [`gono_core::meta`]).
 

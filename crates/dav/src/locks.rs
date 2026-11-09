@@ -1,8 +1,415 @@
-//! Persistent `DavLockSystem` backed by the `locks` table.
+//! `SqliteLs`: the persistent `DavLockSystem` backed by the `locks` table.
 //!
-//! - Locks are keyed by owner and storage `rel_path`, not by the DAV path, so the same file
-//!   reached through different mounts conflicts correctly.
-//! - Every lock has an absolute `timeout_at`. `Timeout: Infinite` and requests above the
-//!   server maximum are clamped, so abandoned locks always expire.
-//! - Expired locks are ignored on read and purged in the background.
+//! - Locks are stored by owner and **storage** path, so the same file reached through
+//!   different mounts conflicts correctly. dav-server only hands the lock system DAV paths, so
+//!   the request's [`Ctx`] (which holds the mounts) is made available to it through a
+//!   task-local: [`with_ctx`] runs the request, and [`CtxBody`] keeps it set while a streamed
+//!   response body (PROPFIND lock discovery) is produced.
+//! - Every lock has an absolute expiry. `Timeout: Infinite`, a missing `Timeout` header and
+//!   requests above the configured maximum are clamped to `webdav.max_lock_timeout_secs`.
+//! - Expired locks are ignored on read and purged whenever a lock is taken.
 //! - Locks survive restarts, so a client holding a token can still refresh or release it.
+//! - Read-only scopes cannot lock: the WebDAV service refuses LOCK with 403 before dav-server
+//!   sees it (a lock system can only answer "locked").
+
+use std::{
+    future::Future,
+    pin::Pin,
+    task::{Context, Poll},
+    time::Duration,
+};
+
+use dav_server::{
+    davpath::DavPath,
+    ls::{DavLock, DavLockSystem, LsFuture},
+};
+use futures_util::FutureExt as _;
+use gono_core::{
+    RelPath, db,
+    locks::{Lock, LockStore},
+};
+use http_body::{Body, Frame, SizeHint};
+use xmltree::Element;
+
+use crate::{
+    ctx::Ctx,
+    resolve::{self, Location},
+};
+
+tokio::task_local! {
+    static CURRENT: Ctx;
+}
+
+/// Runs `future` (a dav-server call) with `ctx` visible to the lock system.
+pub async fn with_ctx<F: Future>(ctx: Ctx, future: F) -> F::Output {
+    CURRENT.scope(ctx, future).await
+}
+
+fn current() -> Option<Ctx> {
+    CURRENT.try_with(Ctx::clone).ok()
+}
+
+pin_project_lite::pin_project! {
+    /// A response body that keeps the request's [`Ctx`] visible to the lock system while it is
+    /// polled.
+    pub struct CtxBody<B> {
+        ctx: Ctx,
+        #[pin]
+        inner: B,
+    }
+}
+
+impl<B> CtxBody<B> {
+    /// Wraps `inner`.
+    pub fn new(ctx: Ctx, inner: B) -> Self {
+        Self { ctx, inner }
+    }
+}
+
+impl<B: Body> Body for CtxBody<B> {
+    type Data = B::Data;
+    type Error = B::Error;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+        let this = self.project();
+        let ctx = this.ctx.clone();
+        let inner = this.inner;
+        CURRENT.sync_scope(ctx, || inner.poll_frame(cx))
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.inner.is_end_stream()
+    }
+
+    fn size_hint(&self) -> SizeHint {
+        self.inner.size_hint()
+    }
+}
+
+/// The lock system of the single `DavHandler`.
+#[derive(Debug, Clone)]
+pub struct SqliteLs {
+    store: LockStore,
+    max_timeout: Duration,
+}
+
+/// Where a DAV path is locked: owner and storage path, and how to name it back to the client.
+struct Target {
+    owner: i64,
+    storage: RelPath,
+    mount: usize,
+    /// The WebDAV root of the request path (`/remote.php/dav/files/<user>` or the alias).
+    root: Vec<u8>,
+}
+
+impl SqliteLs {
+    /// Creates a lock system; lock lifetimes are clamped to `max_timeout`.
+    pub fn new(store: LockStore, max_timeout: Duration) -> Box<Self> {
+        Box::new(Self { store, max_timeout })
+    }
+
+    fn clamp(&self, timeout: Option<Duration>) -> Duration {
+        timeout.map_or(self.max_timeout, |timeout| timeout.min(self.max_timeout))
+    }
+
+    fn target(ctx: &Ctx, path: &DavPath) -> Option<Target> {
+        let identity = ctx.identity();
+        let root = resolve::dav_root_len(identity, path.as_bytes())?;
+        match resolve::resolve(identity, path).ok()? {
+            Location::Storage { mount, storage, .. } => Some(Target {
+                owner: identity.user_id,
+                storage,
+                mount,
+                root: path.as_bytes()[..root].to_vec(),
+            }),
+            Location::Virtual { .. } => None,
+        }
+    }
+
+    /// Converts a stored lock to dav-server's form, naming its root as seen through the
+    /// request's mount (or the mount root when the lock was taken above it).
+    fn to_dav(ctx: &Ctx, target: &Target, lock: Lock, now: i64) -> DavLock {
+        let identity = ctx.identity();
+        let client = resolve::client_for_storage(identity, target.mount, &lock.rel_path)
+            .or_else(|| {
+                identity
+                    .mounts
+                    .get(target.mount)
+                    .map(|m| m.mount_path.clone())
+            })
+            .unwrap_or_default();
+        let collection = lock.rel_path != target.storage || lock.rel_path.is_root();
+        let path = resolve::dav_path(&target.root, &client, collection)
+            .or_else(|| DavPath::new("/").ok())
+            .expect("\"/\" is a valid DAV path");
+        DavLock {
+            token: lock.token,
+            path: Box::new(path),
+            principal: lock.principal,
+            owner: lock
+                .owner_xml
+                .and_then(|xml| Element::parse(xml.as_slice()).ok())
+                .map(Box::new),
+            timeout_at: None,
+            timeout: Some(Duration::from_secs(
+                u64::try_from(lock.timeout_at - now).unwrap_or(0),
+            )),
+            shared: lock.shared,
+            deep: lock.deep,
+        }
+    }
+
+    /// A placeholder conflict for requests the lock system cannot place (no context, virtual
+    /// collections, database errors). dav-server only uses it to answer 423.
+    fn refusal(path: &DavPath) -> DavLock {
+        DavLock {
+            token: String::new(),
+            path: Box::new(path.clone()),
+            principal: None,
+            owner: None,
+            timeout_at: None,
+            timeout: None,
+            shared: false,
+            deep: false,
+        }
+    }
+}
+
+fn serialize(owner: &Element) -> Option<Vec<u8>> {
+    let mut xml = Vec::new();
+    owner.write(&mut xml).ok()?;
+    Some(xml)
+}
+
+fn log_error(err: &gono_core::Error) {
+    tracing::error!(error = %err, "lock database query failed");
+}
+
+impl DavLockSystem for SqliteLs {
+    fn lock(
+        &self,
+        path: &DavPath,
+        principal: Option<&str>,
+        owner: Option<&Element>,
+        timeout: Option<Duration>,
+        shared: bool,
+        deep: bool,
+    ) -> LsFuture<'_, Result<DavLock, DavLock>> {
+        let ctx = current();
+        let path = path.clone();
+        let principal = principal.map(str::to_owned);
+        let owner_xml = owner.and_then(serialize);
+        let timeout = self.clamp(timeout);
+        async move {
+            let ctx = ctx.ok_or_else(|| Self::refusal(&path))?;
+            let target = Self::target(&ctx, &path).ok_or_else(|| Self::refusal(&path))?;
+            let now = db::unix_now();
+            let lock = Lock {
+                token: format!("opaquelocktoken:{}", uuid::Uuid::new_v4()),
+                owner_id: target.owner,
+                rel_path: target.storage.clone(),
+                principal,
+                owner_xml,
+                shared,
+                deep,
+                created_at: now,
+                timeout_at: now
+                    .saturating_add(i64::try_from(timeout.as_secs()).unwrap_or(i64::MAX)),
+            };
+            match self.store.try_lock(lock, now).await {
+                Ok(Ok(lock)) => {
+                    let mut dav = Self::to_dav(&ctx, &target, lock, now);
+                    dav.path = Box::new(path);
+                    Ok(dav)
+                }
+                Ok(Err(conflict)) => Err(Self::to_dav(&ctx, &target, conflict, now)),
+                Err(err) => {
+                    log_error(&err);
+                    Err(Self::refusal(&path))
+                }
+            }
+        }
+        .boxed()
+    }
+
+    fn unlock(&self, path: &DavPath, token: &str) -> LsFuture<'_, Result<(), ()>> {
+        let ctx = current();
+        let path = path.clone();
+        let token = token.to_owned();
+        async move {
+            let target = ctx
+                .as_ref()
+                .and_then(|ctx| Self::target(ctx, &path))
+                .ok_or(())?;
+            let now = db::unix_now();
+            match self
+                .store
+                .find(target.owner, &target.storage, &token, now)
+                .await
+            {
+                Ok(Some(lock)) => match self.store.remove(&lock.token).await {
+                    Ok(true) => Ok(()),
+                    Ok(false) => Err(()),
+                    Err(err) => {
+                        log_error(&err);
+                        Err(())
+                    }
+                },
+                Ok(None) => Err(()),
+                Err(err) => {
+                    log_error(&err);
+                    Err(())
+                }
+            }
+        }
+        .boxed()
+    }
+
+    fn refresh(
+        &self,
+        path: &DavPath,
+        token: &str,
+        timeout: Option<Duration>,
+    ) -> LsFuture<'_, Result<DavLock, ()>> {
+        let ctx = current();
+        let path = path.clone();
+        let token = token.to_owned();
+        let timeout = self.clamp(timeout);
+        async move {
+            let ctx = ctx.ok_or(())?;
+            let target = Self::target(&ctx, &path).ok_or(())?;
+            let now = db::unix_now();
+            let mut lock = match self
+                .store
+                .find(target.owner, &target.storage, &token, now)
+                .await
+            {
+                Ok(Some(lock)) => lock,
+                Ok(None) => return Err(()),
+                Err(err) => {
+                    log_error(&err);
+                    return Err(());
+                }
+            };
+            lock.timeout_at =
+                now.saturating_add(i64::try_from(timeout.as_secs()).unwrap_or(i64::MAX));
+            if let Err(err) = self.store.refresh(&lock.token, lock.timeout_at).await {
+                log_error(&err);
+                return Err(());
+            }
+            Ok(Self::to_dav(&ctx, &target, lock, now))
+        }
+        .boxed()
+    }
+
+    fn check(
+        &self,
+        path: &DavPath,
+        principal: Option<&str>,
+        ignore_principal: bool,
+        deep: bool,
+        submitted_tokens: &[String],
+    ) -> LsFuture<'_, Result<(), DavLock>> {
+        let ctx = current();
+        let path = path.clone();
+        let principal = principal.map(str::to_owned);
+        let tokens = submitted_tokens.to_vec();
+        async move {
+            let ctx = ctx.ok_or_else(|| Self::refusal(&path))?;
+            // Paths outside the identity's mounts hold no locks; the file system refuses
+            // whatever the request tries there.
+            let Some(target) = Self::target(&ctx, &path) else {
+                return Ok(());
+            };
+            let now = db::unix_now();
+            let holds = |lock: &Lock| {
+                tokens.contains(&lock.token) && (ignore_principal || principal == lock.principal)
+            };
+
+            let covering = self
+                .store
+                .covering(target.owner, &target.storage, now)
+                .await
+                .map_err(|err| {
+                    log_error(&err);
+                    Self::refusal(&path)
+                })?;
+            let mut holds_one = false;
+            let mut first_shared = None;
+            for lock in covering {
+                if holds(&lock) {
+                    holds_one = true;
+                } else if !lock.shared {
+                    return Err(Self::to_dav(&ctx, &target, lock, now));
+                } else {
+                    first_shared.get_or_insert(lock);
+                }
+            }
+            if !holds_one && let Some(lock) = first_shared {
+                return Err(Self::to_dav(&ctx, &target, lock, now));
+            }
+
+            if deep {
+                let below = self
+                    .store
+                    .below(target.owner, &target.storage, now)
+                    .await
+                    .map_err(|err| {
+                        log_error(&err);
+                        Self::refusal(&path)
+                    })?;
+                if let Some(lock) = below.into_iter().find(|lock| !holds(lock)) {
+                    return Err(Self::to_dav(&ctx, &target, lock, now));
+                }
+            }
+            Ok(())
+        }
+        .boxed()
+    }
+
+    fn discover(&self, path: &DavPath) -> LsFuture<'_, Vec<DavLock>> {
+        let ctx = current();
+        let path = path.clone();
+        async move {
+            let Some(ctx) = ctx else { return Vec::new() };
+            let Some(target) = Self::target(&ctx, &path) else {
+                return Vec::new();
+            };
+            let now = db::unix_now();
+            match self
+                .store
+                .covering(target.owner, &target.storage, now)
+                .await
+            {
+                Ok(locks) => locks
+                    .into_iter()
+                    .map(|lock| Self::to_dav(&ctx, &target, lock, now))
+                    .collect(),
+                Err(err) => {
+                    log_error(&err);
+                    Vec::new()
+                }
+            }
+        }
+        .boxed()
+    }
+
+    fn delete(&self, path: &DavPath) -> LsFuture<'_, Result<(), ()>> {
+        let ctx = current();
+        let path = path.clone();
+        async move {
+            let target = ctx
+                .as_ref()
+                .and_then(|ctx| Self::target(ctx, &path))
+                .ok_or(())?;
+            self.store
+                .remove_subtree(target.owner, &target.storage)
+                .await
+                .map_err(|err| log_error(&err))
+        }
+        .boxed()
+    }
+}

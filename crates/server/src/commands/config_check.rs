@@ -36,6 +36,10 @@ pub fn run(config_path: &Path) -> anyhow::Result<()> {
             config.storage.data_dir.display().to_string(),
         ),
         ("db.path", config.db.path.display().to_string()),
+        (
+            "webdav.max_lock_timeout_secs",
+            config.webdav.max_lock_timeout_secs.to_string(),
+        ),
         ("logging.level", config.logging.level.as_str().to_owned()),
         ("logging.file", log_file),
         (
@@ -44,7 +48,7 @@ pub fn run(config_path: &Path) -> anyhow::Result<()> {
         ),
         ("admin.enabled", config.admin.enabled.to_string()),
     ] {
-        println!("  {key:<24} {value}");
+        println!("  {key:<29} {value}");
     }
 
     let warnings = config.warnings();

@@ -13,5 +13,8 @@
 //! All metadata writes go through the `MetaStore` (see [`gono_core::meta`]).
 
 pub mod fs;
+pub mod identity;
 pub mod locks;
 pub mod metadata;
+
+pub use identity::{Identity, Mount};

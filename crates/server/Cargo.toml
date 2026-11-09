@@ -15,10 +15,12 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 axum.workspace = true
+base64.workspace = true
 clap.workspace = true
 gono-core.workspace = true
 gono-dav.workspace = true
 gono-nextcloud.workspace = true
+ipnet.workspace = true
 rpassword.workspace = true
 secrecy.workspace = true
 tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }

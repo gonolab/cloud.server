@@ -27,6 +27,7 @@ dav-server = { version = "=0.11.0", default-features = false, features = ["local
 anyhow = "1.0.100"
 argon2 = "0.6.0"
 axum = "0.8.9"
+base64 = "0.22.1"
 clap = { version = "4.6.0", features = ["derive", "env", "wrap_help"] }
 ipnet = "2.12.0"
 rand = "0.10.3"

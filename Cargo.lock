@@ -732,10 +732,12 @@ version = "1.0.0-dev"
 dependencies = [
  "anyhow",
  "axum",
+ "base64",
  "clap",
  "gono-core",
  "gono-dav",
  "gono-nextcloud",
+ "ipnet",
  "rpassword",
  "secrecy",
  "tempfile",

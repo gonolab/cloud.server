@@ -780,7 +780,7 @@ checksum = "e4eba85ea1d0a966a983acd07deee566e67395d2d96b6fb39e62b5a833f1eb0b"
 
 [[package]]
 name = "gono-server"
-version = "1.0.0-dev"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "askama",
@@ -813,7 +813,7 @@ dependencies = [
 
 [[package]]
 name = "gono-server-core"
-version = "1.0.0-dev"
+version = "1.0.0"
 dependencies = [
  "argon2",
  "ipnet",
@@ -834,7 +834,7 @@ dependencies = [
 
 [[package]]
 name = "gono-server-dav"
-version = "1.0.0-dev"
+version = "1.0.0"
 dependencies = [
  "bytes",
  "dav-server",
@@ -861,7 +861,7 @@ dependencies = [
 
 [[package]]
 name = "gono-server-nextcloud"
-version = "1.0.0-dev"
+version = "1.0.0"
 dependencies = [
  "bytes",
  "dav-server",

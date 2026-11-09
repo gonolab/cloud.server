@@ -10,6 +10,8 @@ compatible within a major version: released clients keep working with newer serv
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-11-09
+
 First release of the rewrite on top of [dav-server-rs](https://github.com/messense/dav-server-rs).
 It shares nothing with the legacy `v0.1.x` releases: there is no migration path from them, and
 their tags stay as they are.
@@ -40,3 +42,6 @@ their tags stay as they are.
   database up before upgrades and never deletes data when uninstalling.
 - Documentation: deployment (`docs/deployment.md`), reverse proxies (`docs/reverse-proxy.md`),
   v1 scope and the mobile test checklist.
+
+[Unreleased]: https://github.com/gonolab/cloud.server/compare/server-v1.0.0...HEAD
+[1.0.0]: https://github.com/gonolab/cloud.server/releases/tag/server-v1.0.0

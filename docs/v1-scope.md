@@ -69,5 +69,19 @@ These are resolved by testing against real clients, not by decision:
 
 - Which `status.php` and capabilities fields the clients require (for example `productname` and
   `version`). The default is to report the project's own product name.
+
+  Findings so far (2026-11-09): `status.php` reports `productname` `Gono Cloud` and `version`
+  `30.0.0.0` (`versionstring` `30.0.0`), the Nextcloud release whose client protocol is
+  implemented. The clients select features by `version` (the desktop client uses Login Flow v2
+  from 16.0 on and warns about versions it no longer supports), not by `productname`.
+  `nextcloudcmd` 4.0.6 (Ubuntu 26.04) reads `status.php`, the capabilities and
+  `/ocs/v1.php/cloud/user` and completes every sync scenario of
+  `acceptance/scripts/nextcloudcmd-scenarios.sh` with these values; no desktop behavior
+  depends on `productname`. The mobile apps are not verified yet; `docs/mobile-checklist.md`
+  step 1.1 checks that they accept the server. If one of them requires a specific
+  `productname`, that is a decision for the maintainers, not a default to change silently.
 - The exact set of OCS endpoints the mobile apps call, and which of them can return empty
-  results.
+  results. Implemented: `cloud/capabilities`, `cloud/user`, `cloud/users/<own id>`,
+  `core/apppassword` (`DELETE`) and an empty `core/navigation/apps`; everything else answers
+  an OCS 404. `nextcloudcmd` 4.0.6 calls only `status.php`, the capabilities and
+  `cloud/user`. The mobile checklist records the failed requests of the apps.

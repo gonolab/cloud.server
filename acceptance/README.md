@@ -147,4 +147,25 @@ rewrite.
   reserve, bootstrap password generation, lock persistence across restarts, change log pruning,
   expired upload cleanup, pre-auth token expiry, connection limits, and disabled or relocated
   notify_push.
-- TODO: `nextcloudcmd` sync scenarios (the desktop client), as planned in `docs/v1-scope.md`.
+- The desktop client: `scripts/nextcloudcmd-scenarios.sh` (below) syncs real folders with
+  `nextcloudcmd` instead.
+
+## nextcloudcmd sync scenarios
+
+```sh
+acceptance/scripts/nextcloudcmd-scenarios.sh
+```
+
+Starts the server built from this checkout like `run-new.sh` and syncs two local folders
+("devices") with the Nextcloud desktop client's command line tool: first sync, upload, a change
+deep in the tree made on the other device, renames (including a case-only rename, skipped when
+the local file system ignores case), deletes, and a 30 MiB file uploaded and replaced through
+chunked upload. Every scenario checks the server over WebDAV and the other device; the chunked
+upload is confirmed from the server's request log. CI runs it on Linux with `nextcloudcmd` from
+the `nextcloud-desktop-cmd` package.
+
+| Variable | Effect |
+|---|---|
+| `NEXTCLOUDCMD=<path>` | `nextcloudcmd` binary to use instead of the one on `PATH`. |
+| `NEW_TARGET_DIR=<dir>` | Cargo target directory for the server build. |
+| `KEEP_WORK_DIR=1` | Keep the configuration, data, sync folders and logs (`nextcloudcmd.log`, `server.log`). |

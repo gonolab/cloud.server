@@ -5,7 +5,7 @@ use gono_core::{
     RelPath, Username,
     config::DbConfig,
     db::{self, OpenMode, Pool},
-    meta::{DeadProp, DiskStat, MetaStore},
+    meta::{DeadProp, DiskStat, MetaStore, PropChange},
     users::{self, NewUser},
 };
 
@@ -137,7 +137,7 @@ impl Fixture {
     async fn tag(&self, path: &str) -> i64 {
         let row = self.store.get(self.owner, &p(path)).await.unwrap().unwrap();
         self.store
-            .patch_dead_props(row.id, &[dead("marker", "keep-me")], &[])
+            .patch_dead_props(row.id, &[PropChange::Set(dead("marker", "keep-me"))])
             .await
             .unwrap();
         row.id
@@ -447,20 +447,42 @@ async fn dead_props_follow_moves_and_copies_and_die_with_deletes() {
 async fn dead_props_can_be_set_replaced_and_removed() {
     let f = fixture().await;
     let id = f.write("props.txt", 1).await;
-    f.store
-        .patch_dead_props(id, &[dead("color", "blue"), dead("size", "large")], &[])
-        .await
-        .unwrap();
+    let remove = |name: &str| PropChange::Remove("urn:test".into(), name.into());
     f.store
         .patch_dead_props(
             id,
-            &[dead("color", "red")],
-            &[("urn:test".into(), "size".into())],
+            &[
+                PropChange::Set(dead("color", "blue")),
+                PropChange::Set(dead("size", "large")),
+            ],
         )
         .await
         .unwrap();
-    let props = f.store.dead_props(id).await.unwrap();
-    assert_eq!(props, [dead("color", "red")]);
+    f.store
+        .patch_dead_props(id, &[PropChange::Set(dead("color", "red")), remove("size")])
+        .await
+        .unwrap();
+    assert_eq!(
+        f.store.dead_props(id).await.unwrap(),
+        [dead("color", "red")]
+    );
+
+    // Changes apply in request order.
+    f.store
+        .patch_dead_props(
+            id,
+            &[remove("shape"), PropChange::Set(dead("shape", "round"))],
+        )
+        .await
+        .unwrap();
+    f.store
+        .patch_dead_props(id, &[PropChange::Set(dead("color", "x")), remove("color")])
+        .await
+        .unwrap();
+    assert_eq!(
+        f.store.dead_props(id).await.unwrap(),
+        [dead("shape", "round")]
+    );
 }
 
 #[tokio::test]

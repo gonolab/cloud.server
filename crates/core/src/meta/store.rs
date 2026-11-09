@@ -70,6 +70,16 @@ pub struct DiskStat {
     pub size: u64,
 }
 
+/// One change of a PROPPATCH, applied in request order (a `remove` followed by a `set` of the
+/// same property leaves it set, and the other way round).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PropChange {
+    /// Store (or replace) a property.
+    Set(DeadProp),
+    /// Delete a property by `(namespace, name)`.
+    Remove(String, String),
+}
+
 /// A WebDAV dead property as stored by PROPPATCH.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeadProp {
@@ -522,37 +532,36 @@ impl MetaStore {
         Ok(())
     }
 
-    /// Applies a PROPPATCH to the dead properties of an entry: `set` stores (or replaces)
-    /// properties, `remove` deletes them by `(namespace, name)`. Properties are not content,
-    /// so ETags stay the same.
-    pub async fn patch_dead_props(
-        &self,
-        file_id: i64,
-        set: &[DeadProp],
-        remove: &[(String, String)],
-    ) -> Result<()> {
+    /// Applies the changes of a PROPPATCH to the dead properties of an entry, in order and in
+    /// one transaction. Properties are not content, so ETags stay the same.
+    pub async fn patch_dead_props(&self, file_id: i64, changes: &[PropChange]) -> Result<()> {
         let mut tx = db::begin_immediate(&self.pool).await?;
-        for prop in set {
-            sqlx::query(
-                "INSERT INTO dead_props (file_id, namespace, name, xml) VALUES (?1, ?2, ?3, ?4) \
-                 ON CONFLICT (file_id, namespace, name) DO UPDATE SET xml = excluded.xml",
-            )
-            .bind(file_id)
-            .bind(&prop.namespace)
-            .bind(&prop.name)
-            .bind(&prop.xml)
-            .execute(&mut *tx)
-            .await?;
-        }
-        for (namespace, name) in remove {
-            sqlx::query(
-                "DELETE FROM dead_props WHERE file_id = ?1 AND namespace = ?2 AND name = ?3",
-            )
-            .bind(file_id)
-            .bind(namespace)
-            .bind(name)
-            .execute(&mut *tx)
-            .await?;
+        for change in changes {
+            match change {
+                PropChange::Set(prop) => {
+                    sqlx::query(
+                        "INSERT INTO dead_props (file_id, namespace, name, xml) \
+                         VALUES (?1, ?2, ?3, ?4) \
+                         ON CONFLICT (file_id, namespace, name) DO UPDATE SET xml = excluded.xml",
+                    )
+                    .bind(file_id)
+                    .bind(&prop.namespace)
+                    .bind(&prop.name)
+                    .bind(&prop.xml)
+                    .execute(&mut *tx)
+                    .await?;
+                }
+                PropChange::Remove(namespace, name) => {
+                    sqlx::query(
+                        "DELETE FROM dead_props WHERE file_id = ?1 AND namespace = ?2 AND name = ?3",
+                    )
+                    .bind(file_id)
+                    .bind(namespace)
+                    .bind(name)
+                    .execute(&mut *tx)
+                    .await?;
+                }
+            }
         }
         tx.commit().await?;
         Ok(())

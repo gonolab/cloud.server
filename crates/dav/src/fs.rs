@@ -41,7 +41,7 @@ use dav_server::{
 use futures_util::{FutureExt as _, StreamExt as _, stream};
 use gono_core::{
     RelPath,
-    meta::{DeadProp, DiskStat, FileRow, MetaStore, derived_file_etag},
+    meta::{DeadProp, DiskStat, FileRow, MetaStore, PropChange, derived_file_etag},
     path::disk_segment,
     storage::{DataLayout, lstat_beneath},
 };
@@ -761,8 +761,7 @@ impl ScopedFs {
 
         let mut statuses = Vec::with_capacity(patch.len());
         let mut favorite = None;
-        let mut set = Vec::new();
-        let mut remove = Vec::new();
+        let mut changes = Vec::new();
         for (is_set, prop) in patch {
             let status = if props::is_settable_live(&prop) {
                 match if is_set {
@@ -780,15 +779,15 @@ impl ScopedFs {
                 StatusCode::FORBIDDEN
             } else {
                 let namespace = prop.namespace.clone().unwrap_or_default();
-                if is_set {
-                    set.push(DeadProp {
+                changes.push(if is_set {
+                    PropChange::Set(DeadProp {
                         namespace,
                         name: prop.name.clone(),
                         xml: prop.xml.clone().unwrap_or_default(),
-                    });
+                    })
                 } else {
-                    remove.push((namespace, prop.name.clone()));
-                }
+                    PropChange::Remove(namespace, prop.name.clone())
+                });
                 StatusCode::OK
             };
             statuses.push((status, without_value(prop)));
@@ -814,8 +813,8 @@ impl ScopedFs {
                     .await
                     .map_err(db_error)?;
             }
-            if !set.is_empty() || !remove.is_empty() {
-                meta.patch_dead_props(file_id, &set, &remove)
+            if !changes.is_empty() {
+                meta.patch_dead_props(file_id, &changes)
                     .await
                     .map_err(db_error)?;
             }

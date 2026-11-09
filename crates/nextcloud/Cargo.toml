@@ -10,6 +10,11 @@ publish.workspace = true
 
 [dependencies]
 gono-core.workspace = true
+http.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+xmltree.workspace = true
 
 [lints]
 workspace = true

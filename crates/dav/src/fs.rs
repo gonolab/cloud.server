@@ -146,6 +146,23 @@ impl ScopedFs {
         &self.inner.instance_id
     }
 
+    /// Bytes stored by `owner` (the recursive size of the root) and the free space of the
+    /// file system holding the data directory, if it can be determined. There are no per-user
+    /// quotas in v1.
+    pub async fn usage(&self, owner: i64) -> FsResult<(u64, Option<u64>)> {
+        self.ensure_user(owner).await?;
+        let used = self
+            .inner
+            .meta
+            .get(owner, &RelPath::root())
+            .await
+            .map_err(db_error)?
+            .map_or(0, |row| row.size);
+        let root = self.user_root(owner);
+        let free = blocking(move || Ok(free_space(&root))).await?;
+        Ok((used, free))
+    }
+
     pub(crate) fn user_root(&self, owner: i64) -> PathBuf {
         self.inner.layout.user_files(owner)
     }
@@ -1155,17 +1172,7 @@ impl GuardedFileSystem<Ctx> for ScopedFs {
 
     fn get_quota<'a>(&'a self, ctx: &'a Ctx) -> FsFuture<'a, (u64, Option<u64>)> {
         async move {
-            let owner = ctx.identity().user_id;
-            self.ensure_user(owner).await?;
-            let used = self
-                .inner
-                .meta
-                .get(owner, &RelPath::root())
-                .await
-                .map_err(db_error)?
-                .map_or(0, |row| row.size);
-            let root = self.user_root(owner);
-            let free = blocking(move || Ok(free_space(&root))).await?;
+            let (used, free) = self.usage(ctx.identity().user_id).await?;
             Ok((used, free.map(|free| used.saturating_add(free))))
         }
         .boxed()

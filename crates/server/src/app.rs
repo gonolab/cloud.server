@@ -1,6 +1,8 @@
 //! HTTP routing.
 //!
 //! - `GET /healthz`: liveness and readiness probe.
+//! - `GET /status.php`, the connectivity probe `/index.php/204` and the OCS API under
+//!   `/ocs/v{1,2}.php/` (and the `/index.php/` aliases): see [`crate::nextcloud`].
 //! - `/remote.php/dav/files/<user>/...` and the legacy alias `/remote.php/webdav/...`: WebDAV,
 //!   served by the single `DavHandler` inside [`DavService`]. Requests are authenticated with
 //!   an app password; `<user>` must be the authenticated user.
@@ -30,7 +32,7 @@ use ipnet::IpNet;
 use crate::{
     auth::{AuthOutcome, Authenticator, basic_challenge},
     client_ip::client_ip,
-    request_log,
+    nextcloud, request_log,
 };
 
 /// State shared by all request handlers.
@@ -55,8 +57,17 @@ pub fn router(state: AppState) -> Router {
         .route("/remote.php/webdav/{*path}", any(webdav))
         .route("/remote.php/dav/uploads/{*path}", any(uploads))
         .layer(OcHeadersLayer);
+    let nextcloud = Router::new()
+        .route("/status.php", get(nextcloud::status_php))
+        .route("/index.php/204", get(nextcloud::connectivity))
+        .route("/204", get(nextcloud::connectivity))
+        .route("/ocs/v1.php/{*rest}", any(nextcloud::ocs))
+        .route("/ocs/v2.php/{*rest}", any(nextcloud::ocs))
+        .route("/index.php/ocs/v1.php/{*rest}", any(nextcloud::ocs))
+        .route("/index.php/ocs/v2.php/{*rest}", any(nextcloud::ocs));
     Router::new()
         .route("/healthz", get(healthz))
+        .merge(nextcloud)
         .merge(dav)
         .layer(middleware::from_fn_with_state(
             state.clone(),
@@ -79,7 +90,7 @@ async fn healthz(State(state): State<AppState>) -> (StatusCode, &'static str) {
 
 /// Why a request was not authenticated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Rejection {
+pub(crate) enum Rejection {
     /// Missing or wrong credentials: 401 with a Basic challenge.
     Unauthorized,
     /// Too many failed attempts: 429 with `Retry-After`.
@@ -109,7 +120,7 @@ impl IntoResponse for Rejection {
 }
 
 /// Authenticates a request.
-async fn authenticate(
+pub(crate) async fn authenticate(
     state: &AppState,
     peer: SocketAddr,
     headers: &HeaderMap,
@@ -129,7 +140,7 @@ fn url_user(path: &str, prefix: &str) -> Option<String> {
     String::from_utf8(decoded).ok()
 }
 
-fn percent_decode(input: &[u8]) -> Vec<u8> {
+pub(crate) fn percent_decode(input: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(input.len());
     let mut index = 0;
     while index < input.len() {
@@ -479,6 +490,98 @@ mod tests {
             )
             .await;
         assert_eq!(lock.status, StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn status_capabilities_and_ocs_user() {
+        let f = fixture().await;
+        let status = f.send("GET", "/status.php", None, &[], "").await;
+        assert_eq!(status.status, StatusCode::OK);
+        let status: serde_json::Value = serde_json::from_str(&status.body).unwrap();
+        assert_eq!(status["productname"], gono_core::PRODUCT_NAME);
+        assert_eq!(status["installed"], true);
+        assert_eq!(
+            f.send("GET", "/index.php/204", None, &[], "").await.status,
+            StatusCode::NO_CONTENT
+        );
+
+        let capabilities = f
+            .send(
+                "GET",
+                "/index.php/ocs/v1.php/cloud/capabilities?format=json",
+                None,
+                &[],
+                "",
+            )
+            .await;
+        assert_eq!(capabilities.status, StatusCode::OK);
+        let capabilities: serde_json::Value = serde_json::from_str(&capabilities.body).unwrap();
+        assert_eq!(capabilities["ocs"]["meta"]["statuscode"], 100);
+        assert_eq!(
+            capabilities["ocs"]["data"]["capabilities"]["dav"]["chunking"],
+            "1.0"
+        );
+
+        let anonymous = f.send("GET", "/ocs/v2.php/cloud/user", None, &[], "").await;
+        assert_eq!(anonymous.status, StatusCode::UNAUTHORIZED);
+        assert!(anonymous.header("www-authenticate").starts_with("Basic"));
+        assert!(
+            anonymous.body.contains("<statuscode>997</statuscode>"),
+            "XML by default"
+        );
+
+        let me = f
+            .send(
+                "GET",
+                "/ocs/v2.php/cloud/user",
+                Some(&f.view),
+                &[("Accept", "application/json")],
+                "",
+            )
+            .await;
+        assert_eq!(me.status, StatusCode::OK, "{}", me.body);
+        let me: serde_json::Value = serde_json::from_str(&me.body).unwrap();
+        assert_eq!(me["ocs"]["data"]["id"], "alice");
+        assert_eq!(me["ocs"]["data"]["quota"]["quota"], -3);
+
+        let other = f
+            .send(
+                "GET",
+                "/ocs/v1.php/cloud/users/bob?format=json",
+                Some(&f.full),
+                &[],
+                "",
+            )
+            .await;
+        assert_eq!(other.status, StatusCode::OK, "OCS v1 failures are HTTP 200");
+        assert!(other.body.contains("\"statuscode\":998"), "{}", other.body);
+        let unknown = f.send("GET", "/ocs/v2.php/apps/x/y", None, &[], "").await;
+        assert_eq!(unknown.status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn a_device_can_revoke_its_own_app_password() {
+        let f = fixture().await;
+        let revoke = f
+            .send(
+                "DELETE",
+                "/ocs/v2.php/core/apppassword",
+                Some(&f.view),
+                &[],
+                "",
+            )
+            .await;
+        assert_eq!(revoke.status, StatusCode::OK, "{}", revoke.body);
+        let after = f.send("PROPFIND", FILES, Some(&f.view), &[], "").await;
+        assert_eq!(after.status, StatusCode::UNAUTHORIZED);
+        let other = f
+            .send("PROPFIND", FILES, Some(&f.full), &[("Depth", "0")], "")
+            .await;
+        assert_eq!(
+            other.status,
+            StatusCode::MULTI_STATUS,
+            "other devices keep working"
+        );
     }
 
     #[tokio::test]

@@ -6,14 +6,6 @@
 # regression tests of legacy defects 1-4 that do not need a later phase. What remains are the
 # Nextcloud protocol surface (phase 3) and the web admin UI (phase 4).
 
-# Phase 3: status.php, the connectivity probe, capabilities and the OCS user endpoints are not
-# routed yet (404).
-nextcloud::status_php_is_public_and_reports_installed
-nextcloud::connectivity_probe_returns_204
-nextcloud::capabilities_are_public_on_all_aliases
-nextcloud::ocs_user_requires_authentication
-nextcloud::ocs_user_returns_the_current_user_on_all_aliases
-
 # Phase 3: chunked upload v2. /remote.php/dav/uploads/<user>/ only authorizes so far (403 for
 # other users and read-only scopes) and answers 501 otherwise.
 nextcloud::chunked_upload_assembles_the_file
@@ -42,9 +34,6 @@ login_flow::login_flow_poll_is_pending_until_the_user_logs_in
 login_flow::login_flow_rejects_a_wrong_password
 login_flow::regression_login_flow_requires_explicit_consent
 login_flow::regression_login_flow_mints_a_new_app_password
-# The WebDAV half passes (the web login password gets 401); the OCS half needs
-# /ocs/v2.php/cloud/user (phase 3).
-login_flow::web_password_is_not_a_device_credential
 
 # Phase 3: notify_push. The change log is written, but there is no WebSocket endpoint and no
 # capability yet.

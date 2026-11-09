@@ -741,6 +741,9 @@ name = "gono-nextcloud"
 version = "1.0.0-dev"
 dependencies = [
  "gono-core",
+ "http",
+ "serde_json",
+ "xmltree",
 ]
 
 [[package]]
@@ -759,6 +762,7 @@ dependencies = [
  "ipnet",
  "rpassword",
  "secrecy",
+ "serde_json",
  "tempfile",
  "tokio",
  "tower",

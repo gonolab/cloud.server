@@ -150,6 +150,11 @@ impl DavService {
         Self { handler, fs }
     }
 
+    /// The file system behind the handler.
+    pub fn fs(&self) -> &ScopedFs {
+        &self.fs
+    }
+
     /// Handles one WebDAV request of `identity`.
     pub async fn handle<B>(&self, identity: Arc<Identity>, request: Request<B>) -> Response<DavBody>
     where

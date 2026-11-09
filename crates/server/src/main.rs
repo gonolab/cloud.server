@@ -6,6 +6,7 @@ mod cli;
 mod client_ip;
 mod commands;
 mod logging;
+mod nextcloud;
 mod password_input;
 mod ratelimit;
 mod request_log;

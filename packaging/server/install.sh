@@ -20,7 +20,7 @@ umask 022
 # attaches to a release; the copy in the repository needs --version.
 DEFAULT_VERSION=""
 REPO="gonolab/cloud.server"
-# Oldest GNU C library the Linux release binaries run on (see .github/workflows/release.yml).
+# Oldest GNU C library the Linux release binaries run on (see .github/workflows/release-server.yml).
 MIN_GLIBC_MINOR=28
 
 SERVICE_NAME="gono-cloud"

@@ -44,5 +44,5 @@ backups and uninstalling:
 | `systemd/`, `launchd/` | Service definitions shipped in the archives |
 | `zigbuild-requirements.txt` | Pinned zig toolchain for the Linux release builds |
 
-The release workflow, `.github/workflows/release.yml`, builds the archives when a
+The release workflow, `.github/workflows/release-server.yml`, builds the archives when a
 `server-v<version>` tag is pushed.

@@ -10,8 +10,8 @@
 # dated SOURCE_DATE_EPOCH (default: the time of the last commit), and gzip records no name or
 # time, so packing the same binary twice gives the same archive.
 #
-# Run it from the repository root. The release workflow (.github/workflows/release.yml) calls it
-# for every target.
+# Run it from the repository root. The release workflow (.github/workflows/release-server.yml)
+# calls it for every target.
 
 set -eu
 

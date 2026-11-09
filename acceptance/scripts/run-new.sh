@@ -54,6 +54,21 @@ while (($#)); do
   esac
 done
 
+# Reports a problem as a GitHub Actions error annotation, so that it shows on the run page
+# (annotations are visible without signing in, unlike the logs). Does nothing elsewhere.
+annotate() {
+  local title="$1" message="$2"
+  if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+    message="${message//'%'/'%25'}"
+    message="${message//$'\r'/'%0D'}"
+    message="${message//$'\n'/'%0A'}"
+    echo "::error title=${title}::${message}"
+  fi
+}
+
+# Commands that end the script under `set -e` (build, init, credentials) say which one failed.
+trap '[[ $- == *e* ]] && annotate "run-new.sh" "command failed at line ${LINENO}: ${BASH_COMMAND}"' ERR
+
 require_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
     echo "missing required command: $1" >&2
@@ -112,12 +127,14 @@ wait_for_server() {
     if ! kill -0 "${SERVER_PID}" 2>/dev/null; then
       echo "the server exited before becoming ready" >&2
       cat "${STDOUT_LOG}" "${LOG_FILE}" >&2 2>/dev/null || true
+      annotate "server exited" "$(tail -n 20 "${STDOUT_LOG}" "${LOG_FILE}" 2>/dev/null)"
       exit 1
     fi
     sleep 0.1
   done
   echo "the server did not become ready" >&2
   cat "${STDOUT_LOG}" "${LOG_FILE}" >&2 2>/dev/null || true
+  annotate "server not ready" "$(tail -n 20 "${STDOUT_LOG}" "${LOG_FILE}" 2>/dev/null)"
   exit 1
 }
 
@@ -236,6 +253,15 @@ collect_results() {
   ' "${TEST_LOG}" | sort -u
 }
 
+# The first lines of a failed test's output (`---- <name> stdout ----` block).
+failure_excerpt() {
+  awk -v header="---- $1 stdout ----" '
+    $0 == header { found = 1; next }
+    found && (/^---- / || /^failures:/) { exit }
+    found && NF { print; if (++lines == 12) exit }
+  ' "${TEST_LOG}"
+}
+
 FAILED="$(collect_results FAILED)"
 PASSED="$(collect_results ok)"
 EXPECTED="$(sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^$/d' "${EXPECTED_FAILURES_FILE}" | sort -u)"
@@ -250,15 +276,20 @@ echo "failed:  $(printf '%s\n' "${FAILED}" | sed '/^$/d' | wc -l | tr -d ' ')"
 if [[ -n "${UNEXPECTED_FAILURES}" ]]; then
   echo "unexpected failures (not in new-expected-failures.txt):"
   printf '  %s\n' ${UNEXPECTED_FAILURES}
+  for name in ${UNEXPECTED_FAILURES}; do
+    annotate "unexpected failure ${name}" "$(failure_excerpt "${name#*::}")"
+  done
   STATUS=1
 fi
 if [[ -n "${UNEXPECTED_PASSES}" ]]; then
   echo "expected failures that passed (remove them from new-expected-failures.txt):"
   printf '  %s\n' ${UNEXPECTED_PASSES}
+  annotate "expected failures passed" "${UNEXPECTED_PASSES}"
   STATUS=1
 fi
 if [[ "${CARGO_STATUS}" != "0" && -z "${FAILED}" ]]; then
   echo "cargo test failed without reporting test failures (build error?)"
+  annotate "cargo test failed" "$(grep -E '^error' "${TEST_LOG}" | head -n 10)"
   STATUS=1
 fi
 if [[ "${STATUS}" == "0" ]]; then
@@ -269,12 +300,19 @@ if [[ "${RUN_LITMUS}" == "1" ]]; then
   LITMUS_BIN="${LITMUS:-$(command -v litmus || true)}"
   if [[ -z "${LITMUS_BIN}" || ! -x "${LITMUS_BIN}" ]]; then
     echo "==> RUN_LITMUS=1 but litmus is not installed"
+    annotate "litmus" "RUN_LITMUS=1 but litmus is not installed"
     STATUS=1
   else
     LITMUS_URL="${BASE_URL}/remote.php/dav/files/gono/"
+    LITMUS_LOG="${WORK_DIR}/litmus.log"
     echo "==> running litmus against ${LITMUS_URL}"
-    if ! (cd "${WORK_DIR}" && "${LITMUS_BIN}" "${LITMUS_URL}" gono "${PASSWORD}"); then
+    set +e
+    (cd "${WORK_DIR}" && "${LITMUS_BIN}" "${LITMUS_URL}" gono "${PASSWORD}") 2>&1 | tee "${LITMUS_LOG}"
+    LITMUS_STATUS="${PIPESTATUS[0]}"
+    set -e
+    if [[ "${LITMUS_STATUS}" != "0" ]]; then
       echo "litmus reported failures"
+      annotate "litmus failed" "$(grep -E 'FAIL|summary for|^-> running' "${LITMUS_LOG}" | head -n 20)"
       STATUS=1
     fi
   fi

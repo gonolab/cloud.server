@@ -1,0 +1,30 @@
+[package]
+name = "gono-acceptance"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "Black-box HTTP acceptance tests for Gono Cloud"
+license = "MIT OR Apache-2.0"
+
+# Keep this crate out of the root workspace. It only talks to a running server over HTTP and
+# must not depend on any crate under `crates/`.
+[workspace]
+
+[dependencies]
+base64 = "0.22"
+futures-util = "0.3"
+percent-encoding = "2"
+quick-xml = "0.36"
+reqwest = { version = "0.12", default-features = false, features = [
+  "blocking",
+  "cookies",
+  "json",
+  "rustls-tls",
+] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+scraper = "0.22"
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
+tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
+url = "2"
+uuid = { version = "1", features = ["v4"] }

@@ -20,8 +20,6 @@ umask 022
 # attaches to a release; the copy in the repository needs --version.
 DEFAULT_VERSION=""
 REPO="gonolab/cloud.server"
-# Oldest GNU C library the Linux release binaries run on (see .github/workflows/release-server.yml).
-MIN_GLIBC_MINOR=28
 
 SERVICE_NAME="gono-cloud"
 LAUNCHD_LABEL="cloud.gono.server"
@@ -177,7 +175,8 @@ detect_platform() {
 
 	BIN=/usr/local/bin/gono-cloud
 	if [ "$OS" = linux ]; then
-		TARGET=$ARCH-unknown-linux-gnu
+		# Statically linked against musl: runs on any distribution, with or without glibc.
+		TARGET=$ARCH-unknown-linux-musl
 		CONFIG_DIR=/etc/gono-cloud
 		STATE_DIR=/var/lib/gono-cloud
 		LOG_DIR=""
@@ -199,20 +198,6 @@ detect_platform() {
 	CONFIG_FILE=$CONFIG_DIR/config.toml
 }
 
-check_glibc() {
-	glibc=$(getconf GNU_LIBC_VERSION 2>/dev/null || true)
-	case $glibc in
-	"glibc "*) glibc=${glibc#glibc } ;;
-	*) die "the release binaries need the GNU C library (glibc 2.$MIN_GLIBC_MINOR or newer), which this system does not use; build from source instead" ;;
-	esac
-	glibc_major=${glibc%%.*}
-	glibc_minor=${glibc#*.}
-	glibc_minor=${glibc_minor%%.*}
-	if [ "$glibc_major" -lt 2 ] || { [ "$glibc_major" -eq 2 ] && [ "$glibc_minor" -lt "$MIN_GLIBC_MINOR" ]; }; then
-		die "the release binaries need glibc 2.$MIN_GLIBC_MINOR or newer; this system has $glibc"
-	fi
-}
-
 need_command() {
 	command -v "$1" >/dev/null 2>&1 || die "$1 is needed but not installed"
 }
@@ -220,11 +205,10 @@ need_command() {
 preflight() {
 	[ "$(id -u)" = 0 ] || die "run the installer as root, for example: sudo sh $0 ..."
 	if [ "$OS" = linux ]; then
-		[ -d /run/systemd/system ] || die "systemd is not running; the installer sets the server up as a systemd service"
+		[ -d /run/systemd/system ] || die "systemd is not running; the installer sets the server up as a systemd service. Without systemd (Alpine with OpenRC, containers), run the binary from the release archive yourself: see docs/deployment.md"
 		for command in systemctl useradd groupadd getent tar gzip; do
 			need_command "$command"
 		done
-		[ "$ACTION" = uninstall ] || check_glibc
 	else
 		for command in launchctl dscl tar sudo; do
 			need_command "$command"

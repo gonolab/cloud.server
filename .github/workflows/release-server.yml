@@ -1,9 +1,10 @@
 name: Release (server)
 
 # Builds the server release when a `server-v<version>` tag is pushed: archives for Linux (x86_64,
-# aarch64) and macOS (Apple silicon, Intel), the install script and SHA256SUMS. The archives are
-# tested with the install script on real systems, signed with build provenance attestations and
-# attached to a draft GitHub release that a maintainer reviews and publishes.
+# aarch64; fully static musl binaries that need no C library on the system) and macOS (Apple
+# silicon, Intel), the install script and SHA256SUMS. The archives are tested with the install
+# script on real systems and in containers without glibc, signed with build provenance
+# attestations and attached to a draft GitHub release that a maintainer reviews and publishes.
 #
 # Run it by hand (Actions > Release (server) > Run workflow) for a dry run: it builds and tests
 # everything and uploads the release files as a workflow artifact, but attests nothing and
@@ -30,9 +31,6 @@ env:
   RUST_TOOLCHAIN: "1.99.1"
   # Oldest macOS the binaries run on.
   MACOSX_DEPLOYMENT_TARGET: "11.0"
-  # Oldest glibc the Linux binaries run on; keep MIN_GLIBC_MINOR in
-  # packaging/server/install.sh and the test image below in sync.
-  GLIBC_VERSION: "2.28"
 
 jobs:
   prepare:
@@ -81,9 +79,10 @@ jobs:
 
           ## Install
 
-          On Linux (systemd, glibc ${GLIBC_VERSION} or newer) or macOS 11 or newer, download \`install.sh\`
-          from this release and run it as root. It downloads the archive for the machine, checks
-          it against \`SHA256SUMS\` and sets the server up as a service:
+          On Linux with systemd (any distribution: the Linux binaries are static and need no glibc)
+          or macOS 11 or newer, download \`install.sh\` from this release and run it as root. It
+          downloads the archive for the machine, checks it against \`SHA256SUMS\` and sets the
+          server up as a service:
 
           \`\`\`sh
           sudo sh install.sh --base-url https://cloud.example.com
@@ -96,7 +95,7 @@ jobs:
 
           \`\`\`sh
           sha256sum --check --ignore-missing SHA256SUMS
-          gh attestation verify gono-cloud-${VERSION}-x86_64-unknown-linux-gnu.tar.gz --repo ${GITHUB_REPOSITORY}
+          gh attestation verify gono-cloud-${VERSION}-x86_64-unknown-linux-musl.tar.gz --repo ${GITHUB_REPOSITORY}
           \`\`\`
           EOF
           cat notes.md
@@ -116,9 +115,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - target: x86_64-unknown-linux-gnu
+          - target: x86_64-unknown-linux-musl
             runner: ubuntu-24.04
-          - target: aarch64-unknown-linux-gnu
+          - target: aarch64-unknown-linux-musl
             runner: ubuntu-24.04-arm
           - target: aarch64-apple-darwin
             runner: macos-15
@@ -139,8 +138,8 @@ jobs:
           rustup default "${RUST_TOOLCHAIN}"
           rustc --version
 
-      # cargo-zigbuild links against an old glibc with zig, so the binaries run on older
-      # distributions than this runner. Both come from PyPI, pinned by hash.
+      # cargo-zigbuild compiles the C parts (SQLite, mimalloc) with zig's musl toolchain and links
+      # everything statically. Both come from PyPI, pinned by hash.
       - name: Install zig and cargo-zigbuild
         if: runner.os == 'Linux'
         run: |
@@ -152,7 +151,7 @@ jobs:
       - name: Build
         run: |
           if [ "${RUNNER_OS}" = Linux ]; then
-            cargo zigbuild --release --locked -p gono-server --target "${TARGET}.${GLIBC_VERSION}"
+            cargo zigbuild --release --locked -p gono-server --target "${TARGET}"
           else
             cargo build --release --locked -p gono-server --target "${TARGET}"
           fi
@@ -161,6 +160,16 @@ jobs:
         run: |
           binary="target/${TARGET}/release/gono-cloud"
           file "${binary}"
+          if [ "${RUNNER_OS}" = Linux ]; then
+            # Fully static: no program interpreter and no shared libraries.
+            readelf -lW "${binary}" > segments.txt
+            readelf -dW "${binary}" > dynamic.txt
+            cat dynamic.txt
+            if grep -q INTERP segments.txt || grep -q NEEDED dynamic.txt; then
+              echo "::error::${TARGET}: the binary is not fully static"
+              exit 1
+            fi
+          fi
           if [ "${TARGET}" = x86_64-apple-darwin ]; then
             if arch -x86_64 /usr/bin/true 2>/dev/null; then
               arch -x86_64 "${binary}" --version
@@ -230,9 +239,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - target: x86_64-unknown-linux-gnu
+          - target: x86_64-unknown-linux-musl
             runner: ubuntu-24.04
-          - target: aarch64-unknown-linux-gnu
+          - target: aarch64-unknown-linux-musl
             runner: ubuntu-24.04-arm
           - target: aarch64-apple-darwin
             runner: macos-15
@@ -250,34 +259,11 @@ jobs:
           name: gono-cloud-server-${{ needs.prepare.outputs.version }}
           path: dist
 
-      # The oldest glibc the binaries claim to support: AlmaLinux 8 ships glibc 2.28. Only the
-      # binary runs in the container (as the runner's user, which owns the mounted state);
-      # extracting and the HTTP checks happen on the runner.
-      - name: Run on glibc 2.28
+      # No interpreter, no shared libraries, and init/serve/SIGTERM in an image holding nothing
+      # but the binary, on Alpine (musl) and on CentOS 7 (glibc 2.17).
+      - name: Run without glibc
         if: runner.os == 'Linux'
-        run: |
-          mkdir -p glibc/state
-          tar -xzf "${ARCHIVE}" -C glibc
-          release="${PWD}/glibc/$(basename "${ARCHIVE}" .tar.gz)"
-          sed -e 's|^data_dir = .*|data_dir = "/state/data"|' \
-            -e 's|^path = "gono-cloud.db"|path = "/state/gono-cloud.db"|' \
-            "${release}/config.example.toml" > glibc/config.toml
-          run=(docker run --user "$(id -u):$(id -g)" -v "${release}:/release:ro"
-            -v "${PWD}/glibc/config.toml:/config.toml:ro" -v "${PWD}/glibc/state:/state")
-          "${run[@]}" --rm almalinux:8 ldd --version | sed -n 1p
-          printf '%s\n' "glibc test password" |
-            "${run[@]}" --rm -i almalinux:8 /release/gono-cloud --config /config.toml init --password-stdin
-          "${run[@]}" -d --name glibc --network host almalinux:8 \
-            /release/gono-cloud --config /config.toml serve
-          for _ in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:16102/healthz; then break; fi
-            sleep 1
-          done
-          curl -fsS http://127.0.0.1:16102/status.php
-          docker stop --time 45 glibc
-          docker logs glibc
-          test "$(docker inspect --format '{{.State.ExitCode}}' glibc)" = 0
-          docker rm glibc
+        run: packaging/server/test-static.sh "${ARCHIVE}"
 
       - name: Install, upgrade and uninstall
         run: packaging/server/test-install.sh dist/install.sh "${ARCHIVE}" dist/SHA256SUMS

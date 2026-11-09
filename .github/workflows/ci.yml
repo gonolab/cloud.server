@@ -87,10 +87,12 @@ jobs:
       - name: nextcloudcmd sync scenarios
         run: acceptance/scripts/nextcloudcmd-scenarios.sh
 
-  # Packs a debug build the way the release workflow packs release builds and runs the install
-  # script end to end on the runner: refused installs, a fresh install as a systemd service or
-  # launchd job, WebDAV through the service, the CLI's root guard, a graceful stop, an upgrade
-  # and the uninstall. See packaging/server/test-install.sh.
+  # Packs a debug build the way the release workflow packs release builds (on Linux a static
+  # musl build with cargo-zigbuild, as released) and runs the install script end to end on the
+  # runner: refused installs, a fresh install as a systemd service or launchd job, WebDAV
+  # through the service, the CLI's root guard, a graceful stop, an upgrade and the uninstall.
+  # On Linux it also checks that the binary is static and runs without glibc. See
+  # packaging/server/test-install.sh and test-static.sh.
   install:
     name: Install script (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -108,6 +110,17 @@ jobs:
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
+          if [ "${RUNNER_OS}" = Linux ]; then
+            rustup target add "$(uname -m)-unknown-linux-musl"
+          fi
+
+      - name: Install zig and cargo-zigbuild
+        if: runner.os == 'Linux'
+        run: |
+          python3 -m venv "${RUNNER_TEMP}/zigbuild"
+          "${RUNNER_TEMP}/zigbuild/bin/pip" install --require-hashes --no-deps \
+            -r packaging/server/zigbuild-requirements.txt
+          echo "${RUNNER_TEMP}/zigbuild/bin" >> "${GITHUB_PATH}"
 
       - name: Cache
         uses: Swatinem/rust-cache@v2
@@ -123,12 +136,25 @@ jobs:
           fi
 
       - name: Build
-        run: cargo build --locked -p gono-server
+        run: |
+          if [ "${RUNNER_OS}" = Linux ]; then
+            target="$(uname -m)-unknown-linux-musl"
+            cargo zigbuild --locked -p gono-server --target "${target}"
+            binary="target/${target}/debug/gono-cloud"
+          else
+            target="$(rustc -vV | sed -n 's/^host: //p')"
+            cargo build --locked -p gono-server
+            binary="target/debug/gono-cloud"
+          fi
+          echo "TARGET=${target}" >> "${GITHUB_ENV}"
+          echo "BINARY=${binary}" >> "${GITHUB_ENV}"
 
       - name: Package
-        run: |
-          host="$(rustc -vV | sed -n 's/^host: //p')"
-          packaging/server/package.sh "${host}" target/debug/gono-cloud dist
+        run: packaging/server/package.sh "${TARGET}" "${BINARY}" dist
+
+      - name: Static binary without glibc
+        if: runner.os == 'Linux'
+        run: packaging/server/test-static.sh dist/*.tar.gz
 
       - name: Install, upgrade and uninstall
         run: packaging/server/test-install.sh packaging/server/install.sh dist/*.tar.gz

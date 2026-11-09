@@ -1,6 +1,7 @@
-# Linker toolchain for the Linux release builds (.github/workflows/release-server.yml), pinned
-# by version and hash. cargo-zigbuild links against glibc 2.28 with zig, so the binaries run on
-# older distributions than the build runner. Install with:
+# C compiler and linker for the static musl builds of the release (.github/workflows/
+# release-server.yml) and of the CI install test, pinned by version and hash. cargo-zigbuild
+# compiles SQLite and mimalloc with zig's musl toolchain and links everything statically, for
+# both x86_64 and aarch64. Install with:
 #   pip install --require-hashes --no-deps -r packaging/server/zigbuild-requirements.txt
 ziglang==0.16.0 \
     --hash=sha256:9fcda73f62b851dd72a54b710ad40a209896db14cfb13649e62191243556342b \

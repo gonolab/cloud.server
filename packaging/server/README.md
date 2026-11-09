@@ -17,8 +17,26 @@ those archives are made of and the scripts that build and install them.
 | `CHANGELOG.md` | Changes of each server release |
 | `LICENSE-APACHE`, `LICENSE-MIT` | The license: MIT OR Apache-2.0, at your option |
 
-Linux builds need glibc 2.28 or newer (Debian 10, Ubuntu 20.04, RHEL 8 and later); macOS builds
-need macOS 11 or newer.
+The Linux binaries are fully static (musl, with mimalloc as the memory allocator): they need no
+C library on the system and run on any x86_64 or aarch64 Linux distribution, glibc-based or not
+(Alpine). The install script additionally needs systemd. macOS builds need macOS 11 or newer.
+
+### musl notes
+
+The Linux binaries use musl instead of glibc. Two differences between them were checked and do
+not affect the server:
+
+- **Name resolution.** musl's resolver handles search domains and large DNS responses
+  differently from glibc's. The server resolves no names at all: it makes no outbound
+  connections, `server.bind` is an address literal, `server.trusted_proxies` are addresses and
+  CIDR blocks, and `server.base_url` is only used to build URLs. If outbound connections are
+  ever added, use a resolver written in Rust (such as hickory-resolver) instead of
+  `getaddrinfo`.
+- **Thread stacks.** musl's default thread stack is about 128 KiB, glibc's 8 MiB. The server
+  starts every thread through Rust's standard library or tokio, which set the stack size
+  explicitly (2 MiB), and the main thread's stack comes from the kernel (`ulimit -s`). The
+  bundled SQLite and mimalloc start no threads of their own. Stack sizes are therefore the same
+  as with glibc.
 
 ## Installing
 
@@ -41,8 +59,9 @@ backups and uninstalling:
 | `install.sh` | Installer for Linux (systemd) and macOS (launchd); `--help` lists its options |
 | `package.sh` | Packs a compiled binary into a release archive |
 | `test-install.sh` | End-to-end test of `install.sh`; installs a service, so it only runs in CI |
+| `test-static.sh` | Checks that a Linux archive's binary is static and runs without glibc (containers) |
 | `systemd/`, `launchd/` | Service definitions shipped in the archives |
-| `zigbuild-requirements.txt` | Pinned zig toolchain for the Linux release builds |
+| `zigbuild-requirements.txt` | Pinned zig toolchain for the static Linux builds |
 
 The release workflow, `.github/workflows/release-server.yml`, builds the archives when a
 `server-v<version>` tag is pushed.

@@ -35,6 +35,10 @@ tracing-appender.workspace = true
 tracing-subscriber.workspace = true
 url.workspace = true
 
+# musl's allocator is slow under concurrency; the static Linux release builds use mimalloc.
+[target.'cfg(target_env = "musl")'.dependencies]
+mimalloc.workspace = true
+
 [dev-dependencies]
 futures-util = { workspace = true, features = ["sink"] }
 http-body-util.workspace = true

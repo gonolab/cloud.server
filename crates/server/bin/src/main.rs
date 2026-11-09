@@ -23,6 +23,13 @@ use clap::Parser;
 
 use crate::cli::{Cli, Command, ConfigCommand};
 
+/// The static Linux release builds use musl, whose allocator serializes on a global lock and
+/// slows down the many concurrent requests of a file server. mimalloc replaces it there; other
+/// builds keep the system allocator.
+#[cfg(target_env = "musl")]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 #[tokio::main]
 async fn main() -> ExitCode {
     let cli = Cli::parse();

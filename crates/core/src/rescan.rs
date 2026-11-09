@@ -232,7 +232,21 @@ fn rename_to_nfc(from: &Path, to: &Path, meta: &fs::Metadata, dry_run: bool) -> 
     match fs::symlink_metadata(to) {
         Ok(existing) if same_file(&existing, meta) => {
             if !dry_run {
-                fs::rename(from, to).map_err(|err| io_error(from, err))?;
+                // Renaming a file onto itself does nothing (POSIX), so the stored name would
+                // stay as it is: go through a temporary name.
+                let token = crate::secret::random_token(16);
+                let temp = from.with_file_name(format!(
+                    ".gono-rescan-{}",
+                    secrecy::ExposeSecret::expose_secret(&token)
+                ));
+                fs::rename(from, &temp).map_err(|err| io_error(from, err))?;
+                if let Err(err) = rename_no_replace(&temp, to) {
+                    let _ = fs::rename(&temp, from);
+                    return match err.kind() {
+                        io::ErrorKind::AlreadyExists => Ok(false),
+                        _ => Err(io_error(from, err)),
+                    };
+                }
             }
             return Ok(true);
         }
@@ -350,7 +364,21 @@ mod tests {
         let done = walk(root, &RelPath::root(), false).unwrap();
         assert_eq!(done.renamed, [RelPath::parse(NFC).unwrap()]);
         assert!(names(&done).contains(&format!("{NFC}/inner.txt").as_str()));
+        // The stored name changed (lookups alone would also succeed on APFS, which ignores
+        // normalization), and nothing else is left behind.
+        let listing: Vec<OsString> = fs::read_dir(root)
+            .unwrap()
+            .map(|item| item.unwrap().file_name())
+            .filter(|name| name != "probe-\u{e9}")
+            .collect();
+        assert_eq!(listing, [OsString::from(NFC)]);
         assert!(root.join(NFC).join("inner.txt").exists());
+        assert!(
+            walk(root, &RelPath::root(), false)
+                .unwrap()
+                .renamed
+                .is_empty()
+        );
 
         if distinct {
             // Another file already has the NFC name: report it, touch nothing.

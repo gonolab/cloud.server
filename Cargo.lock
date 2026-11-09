@@ -857,6 +857,7 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
+ "xml",
  "xmltree",
 ]
 

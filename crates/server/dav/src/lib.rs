@@ -16,6 +16,7 @@
 //! - [`locks`]: the persistent `DavLockSystem`, keyed by storage path.
 //! - [`report`]: the `oc:filter-files` favorites REPORT, served next to dav-server.
 //! - [`oc_headers`]: the tower layer adding `OC-ETag`, `OC-FileId` and `X-NC-Permissions`.
+//! - [`xml_limits`]: the size and nesting limits for XML request bodies.
 //!
 //! All metadata writes go through the `MetaStore` (see [`gono_server_core::meta`]).
 
@@ -30,6 +31,7 @@ pub mod props;
 pub mod report;
 pub mod resolve;
 pub mod service;
+pub mod xml_limits;
 
 pub use ctx::{Ctx, PropfindKind, RequestInfo};
 pub use fs::ScopedFs;

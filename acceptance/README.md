@@ -68,7 +68,9 @@ The script checks `d366e79` out into a temporary git worktree, builds it, starts
 loopback port with a throwaway config and data directory, mints the credentials below with the
 legacy CLI, runs `cargo test`, and compares the failing tests with
 `legacy-expected-failures.txt`. It exits non-zero when a test fails that is not on the list, or
-when a listed test passes. Everything it created is removed on exit.
+when a listed test passes. Everything it created is removed on exit. `tests/xml_limits.rs` is
+skipped there: the legacy server crashes on a deeply nested XML body, which would take every
+other running test down with it.
 
 | Script option or variable | Effect |
 |---|---|

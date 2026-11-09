@@ -11,6 +11,10 @@
 //! - `/remote.php/dav/uploads/<user>/...`: Nextcloud chunked upload v2
 //!   ([`gono_server_nextcloud::chunking`]). Other users' namespaces and app passwords without any
 //!   writable mount are refused with 403 before the protocol is looked at.
+//! - On both WebDAV routes, after authentication, the XML body of `PROPFIND`, `PROPPATCH`,
+//!   `LOCK` and `REPORT` is read here and refused with 400 when its elements nest too deeply
+//!   ([`check_xml_body`]): the XML parsers behind these routes recurse once per level, and a
+//!   few thousand levels would overflow the stack and abort the whole server.
 //! - notify_push, when `notify_push.enabled`: the WebSocket at `/push/ws` and the pre-auth
 //!   endpoint `/index.php/apps/notify_push/pre_auth`: see [`crate::notify_push`].
 //! - The web admin UI under `admin.path`, when `admin.enabled`: see [`crate::admin`].
@@ -31,7 +35,9 @@ use axum::{
     routing::{any, get, post},
 };
 use gono_server_core::db;
-use gono_server_dav::{DavService, Identity, OcHeadersLayer, report, resolve::FILES_ROOT};
+use gono_server_dav::{
+    DavService, Identity, OcHeadersLayer, report, resolve::FILES_ROOT, xml_limits,
+};
 use gono_server_nextcloud::{
     chunking::{ChunkedUploads, UPLOADS_ROOT},
     notify_push::{Hub, PRE_AUTH_PATH, WEBSOCKET_PATH},
@@ -240,6 +246,10 @@ async fn webdav(
 /// Hands an authenticated WebDAV request to dav-server, except `REPORT`, which dav-server does
 /// not implement (see [`gono_server_dav::report`]).
 async fn serve_dav(state: &AppState, identity: Arc<Identity>, request: Request) -> Response {
+    let request = match check_xml_body(request).await {
+        Ok(request) => request,
+        Err(rejection) => return rejection,
+    };
     if request.method().as_str() == "REPORT" {
         return report::handle(&state.dav, identity, request)
             .await
@@ -264,7 +274,35 @@ async fn uploads(
     if !own || !identity.can_write_somewhere() {
         return StatusCode::FORBIDDEN.into_response();
     }
+    let request = match check_xml_body(request).await {
+        Ok(request) => request,
+        Err(rejection) => return rejection,
+    };
     state.uploads.handle(identity, request).await.map(Body::new)
+}
+
+/// Reads the XML body of an authenticated WebDAV request (methods in
+/// [`xml_limits::parses_body`]) and refuses it with 400 when its elements nest deeper than
+/// [`xml_limits::MAX_DEPTH`], before any parser builds a tree from it. Bodies larger than
+/// [`xml_limits::MAX_BODY`] are refused with 413, as the handlers behind this would. Requests
+/// with other methods pass through untouched, so `PUT` bodies keep streaming.
+async fn check_xml_body(request: Request) -> Result<Request, Response> {
+    if !xml_limits::parses_body(request.method()) {
+        return Ok(request);
+    }
+    let (parts, body) = request.into_parts();
+    let Ok(bytes) = axum::body::to_bytes(body, xml_limits::MAX_BODY).await else {
+        return Err(StatusCode::PAYLOAD_TOO_LARGE.into_response());
+    };
+    if xml_limits::exceeds_depth(&bytes, xml_limits::MAX_DEPTH) {
+        tracing::debug!(
+            method = %parts.method,
+            "refused an XML body nested deeper than {} levels",
+            xml_limits::MAX_DEPTH
+        );
+        return Err(StatusCode::BAD_REQUEST.into_response());
+    }
+    Ok(Request::from_parts(parts, Body::from(bytes)))
 }
 
 #[cfg(test)]
@@ -463,6 +501,106 @@ mod tests {
         let limited = f.send("GET", FILES, Some(&f.full), &[], "").await;
         assert_eq!(limited.status, StatusCode::TOO_MANY_REQUESTS);
         assert!(limited.header("retry-after").parse::<u64>().unwrap() >= 1);
+    }
+
+    /// An XML body whose elements nest `depth` levels: a DAV root with `depth - 1` unclosed
+    /// elements, the shape that made xmltree overflow the stack.
+    fn deeply_nested(root: &str, depth: usize) -> String {
+        format!(
+            r#"<?xml version="1.0"?><D:{root} xmlns:D="DAV:">{}"#,
+            "<a>".repeat(depth - 1)
+        )
+    }
+
+    #[tokio::test]
+    async fn deeply_nested_xml_bodies_are_refused_before_they_are_parsed() {
+        let f = fixture().await;
+        let file = format!("{FILES}/x.txt");
+        let put = f.send("PUT", &file, Some(&f.full), &[], "x").await;
+        assert_eq!(put.status, StatusCode::CREATED);
+
+        // 3000 levels overflow a 2 MiB stack even in release builds; without the check the
+        // first of these requests would abort the test process.
+        let cases = [
+            ("PROPFIND", FILES, "propfind"),
+            ("PROPFIND", "/remote.php/webdav/", "propfind"),
+            ("PROPPATCH", file.as_str(), "propertyupdate"),
+            ("LOCK", file.as_str(), "lockinfo"),
+            ("REPORT", FILES, "filter-files"),
+            ("PROPFIND", "/remote.php/dav/uploads/alice", "propfind"),
+        ];
+        for (method, uri, root) in cases {
+            let body = deeply_nested(root, 3000);
+            let refused = f
+                .send(method, uri, Some(&f.full), &[("Depth", "0")], &body)
+                .await;
+            assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{method} {uri}");
+        }
+        let read_only = f
+            .send(
+                "PROPFIND",
+                FILES,
+                Some(&f.view),
+                &[("Depth", "0")],
+                &deeply_nested("propfind", 3000),
+            )
+            .await;
+        assert_eq!(read_only.status, StatusCode::BAD_REQUEST);
+        // Authentication comes first: anonymous requests learn nothing about the body check.
+        let anonymous = f
+            .send(
+                "PROPFIND",
+                FILES,
+                None,
+                &[("Depth", "0")],
+                &deeply_nested("propfind", 3000),
+            )
+            .await;
+        assert_eq!(anonymous.status, StatusCode::UNAUTHORIZED);
+
+        // Exactly the limit still reaches dav-server: propfind, prop and a dead property whose
+        // value nests the remaining levels.
+        let inner = xml_limits::MAX_DEPTH - 2;
+        let at_limit = format!(
+            r#"<D:propfind xmlns:D="DAV:"><D:prop>{}{}</D:prop></D:propfind>"#,
+            r#"<x:a xmlns:x="urn:x">"#.repeat(inner),
+            "</x:a>".repeat(inner)
+        );
+        let accepted = f
+            .send(
+                "PROPFIND",
+                &file,
+                Some(&f.full),
+                &[("Depth", "0")],
+                &at_limit,
+            )
+            .await;
+        assert_eq!(
+            accepted.status,
+            StatusCode::MULTI_STATUS,
+            "{}",
+            accepted.body
+        );
+
+        // The size limit is unchanged, and PUT bodies are not read by the check.
+        let oversized = format!(
+            r#"<D:propertyupdate xmlns:D="DAV:"><!--{}--></D:propertyupdate>"#,
+            "x".repeat(xml_limits::MAX_BODY)
+        );
+        let too_large = f
+            .send("PROPPATCH", &file, Some(&f.full), &[], &oversized)
+            .await;
+        assert_eq!(too_large.status, StatusCode::PAYLOAD_TOO_LARGE);
+        let big = "y".repeat(4 * xml_limits::MAX_BODY);
+        let stored = f
+            .send("PUT", &format!("{FILES}/big.txt"), Some(&f.full), &[], &big)
+            .await;
+        assert_eq!(stored.status, StatusCode::CREATED);
+
+        let still_serving = f
+            .send("PROPFIND", FILES, Some(&f.full), &[("Depth", "1")], "")
+            .await;
+        assert_eq!(still_serving.status, StatusCode::MULTI_STATUS);
     }
 
     /// Defect 3 of the legacy server: PUT/HEAD and GET/PROPFIND reported different ETags.

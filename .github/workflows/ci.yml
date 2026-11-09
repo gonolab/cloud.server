@@ -116,7 +116,7 @@ jobs:
         run: |
           if [ "${RUNNER_OS}" = Linux ]; then
             command -v shellcheck >/dev/null || sudo apt-get install -y --no-install-recommends shellcheck
-            shellcheck --version | head -n 2
+            shellcheck --version | sed -n 2p
             shellcheck -s sh packaging/server/*.sh
           else
             plutil -lint packaging/server/launchd/*.plist

@@ -66,7 +66,7 @@ jobs:
         run: |
           awk -v heading="## [${VERSION}]" '
             index($0, heading) == 1 { found = 1; next }
-            found && /^## / { exit }
+            found && (/^## / || /^\[.+\]: /) { exit }
             found && (printed || NF) { print; printed = 1 }
           ' crates/server/CHANGELOG.md > notes.md
           if [ ! -s notes.md ]; then
@@ -250,28 +250,34 @@ jobs:
           name: gono-cloud-server-${{ needs.prepare.outputs.version }}
           path: dist
 
-      # The oldest glibc the binaries claim to support: AlmaLinux 8 ships glibc 2.28.
+      # The oldest glibc the binaries claim to support: AlmaLinux 8 ships glibc 2.28. Only the
+      # binary runs in the container (as the runner's user, which owns the mounted state);
+      # extracting and the HTTP checks happen on the runner.
       - name: Run on glibc 2.28
         if: runner.os == 'Linux'
         run: |
-          docker run --rm -v "${PWD}/dist:/dist:ro" -e ARCHIVE="${ARCHIVE#dist/}" almalinux:8 sh -euc '
-            ldd --version | head -n 1
-            cd /tmp
-            tar -xzf "/dist/${ARCHIVE}"
-            dir="/tmp/${ARCHIVE%.tar.gz}"
-            sed -e "s|^data_dir = .*|data_dir = \"/tmp/data\"|" -e "s|^path = \"gono-cloud.db\"|path = \"/tmp/gono-cloud.db\"|" \
-              "${dir}/config.example.toml" > /tmp/config.toml
-            printf "%s\n" "glibc test password" | "${dir}/gono-cloud" --config /tmp/config.toml init --password-stdin
-            "${dir}/gono-cloud" --config /tmp/config.toml serve &
-            server=$!
-            for _ in $(seq 1 30); do
-              if curl -fsS http://127.0.0.1:16102/healthz; then break; fi
-              sleep 1
-            done
-            curl -fsS http://127.0.0.1:16102/status.php
-            kill -TERM "${server}"
-            wait "${server}"
-          '
+          mkdir -p glibc/state
+          tar -xzf "${ARCHIVE}" -C glibc
+          release="${PWD}/glibc/$(basename "${ARCHIVE}" .tar.gz)"
+          sed -e 's|^data_dir = .*|data_dir = "/state/data"|' \
+            -e 's|^path = "gono-cloud.db"|path = "/state/gono-cloud.db"|' \
+            "${release}/config.example.toml" > glibc/config.toml
+          run=(docker run --user "$(id -u):$(id -g)" -v "${release}:/release:ro"
+            -v "${PWD}/glibc/config.toml:/config.toml:ro" -v "${PWD}/glibc/state:/state")
+          "${run[@]}" --rm almalinux:8 ldd --version | sed -n 1p
+          printf '%s\n' "glibc test password" |
+            "${run[@]}" --rm -i almalinux:8 /release/gono-cloud --config /config.toml init --password-stdin
+          "${run[@]}" -d --name glibc --network host almalinux:8 \
+            /release/gono-cloud --config /config.toml serve
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:16102/healthz; then break; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:16102/status.php
+          docker stop --time 45 glibc
+          docker logs glibc
+          test "$(docker inspect --format '{{.State.ExitCode}}' glibc)" = 0
+          docker rm glibc
 
       - name: Install, upgrade and uninstall
         run: packaging/server/test-install.sh dist/install.sh "${ARCHIVE}" dist/SHA256SUMS

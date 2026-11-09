@@ -8,7 +8,9 @@ not a member of the root workspace (`[workspace]` in `Cargo.toml`, own `Cargo.lo
 The assertions follow the rewrite's design (`docs/v1-scope.md`). Where the legacy server behaves
 differently, its tests fail on purpose; [`legacy-baseline.md`](legacy-baseline.md) lists those
 failures and [`legacy-expected-failures.txt`](legacy-expected-failures.txt) is the
-machine-readable list.
+machine-readable list. [`new-expected-failures.txt`](new-expected-failures.txt) lists, with a
+reason for each, the tests the rewrite does not pass yet because their feature belongs to a later
+phase.
 
 ## Running
 
@@ -20,6 +22,30 @@ export GONO_ACCEPT_USER=gono
 export GONO_ACCEPT_PASSWORD=<full-scope app password>
 cargo test --manifest-path acceptance/Cargo.toml
 ```
+
+Against the server built from this checkout, with everything set up and torn down
+automatically:
+
+```sh
+acceptance/scripts/run-new.sh
+RUN_LITMUS=1 acceptance/scripts/run-new.sh   # also run litmus
+```
+
+The script builds `gono-cloud`, runs `init --password-stdin` in a temporary directory, starts
+`serve` on a free loopback port, creates a second user and the credentials below with the
+`user` and `app-password` commands, runs `cargo test`, and compares the failing tests with
+`new-expected-failures.txt`. It exits non-zero when a test fails that is not on the list, when a
+listed test passes, or (with `RUN_LITMUS=1`) when litmus is missing or fails. litmus runs against
+`<base>/remote.php/dav/files/gono/`. CI runs it on Linux with `RUN_LITMUS=1`.
+
+| Script option or variable | Effect |
+|---|---|
+| `-- <args>` | Extra arguments for the test binaries, e.g. `-- --test-threads=4`. |
+| `--serve` | Start the server, print the path of an env file with the credentials, and wait for Ctrl-C instead of running the tests. |
+| `NEW_TARGET_DIR=<dir>` | Cargo target directory for the server build (default: the repository's `target/`). |
+| `RUN_LITMUS=1` | Also run litmus; fails when it is not installed. |
+| `LITMUS=<path>` | `litmus` binary to use instead of the one on `PATH` (set `TESTROOT` too for an uninstalled build). |
+| `KEEP_WORK_DIR=1` | Keep the temporary config, data directory, and logs. |
 
 Against the legacy server, with everything set up and torn down automatically:
 

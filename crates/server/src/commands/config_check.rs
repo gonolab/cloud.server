@@ -47,6 +47,7 @@ pub fn run(config_path: &Path) -> anyhow::Result<()> {
             config.notify_push.enabled.to_string(),
         ),
         ("admin.enabled", config.admin.enabled.to_string()),
+        ("admin.path", config.admin.path.clone()),
     ] {
         println!("  {key:<29} {value}");
     }

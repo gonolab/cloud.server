@@ -7,6 +7,7 @@ use gono_core::{
     db, password,
     storage::DataLayout,
     users::{self, NewUser},
+    web_sessions,
 };
 
 use super::{
@@ -95,10 +96,14 @@ pub async fn run(config_path: &Path, command: UserCommand) -> anyhow::Result<()>
             Ok(())
         }
         UserCommand::SetPassword { username, password } => {
-            users::get(&pool, &username).await?;
+            let user = users::get(&pool, &username).await?;
             let hash = read_password_hash(password, &username).await?;
             users::set_password_hash(&pool, &username, &hash).await?;
+            let ended = web_sessions::delete_for_user(&pool, user.id, None).await?;
             println!("Changed the web login password of {username}.");
+            if ended > 0 {
+                println!("Signed {username} out of {ended} browser session(s).");
+            }
             Ok(())
         }
         UserCommand::Enable { username } => {
@@ -107,8 +112,13 @@ pub async fn run(config_path: &Path, command: UserCommand) -> anyhow::Result<()>
             Ok(())
         }
         UserCommand::Disable { username } => {
+            let user = users::get(&pool, &username).await?;
             users::set_enabled(&pool, &username, false).await?;
-            println!("Disabled user {username}; their app passwords stop working too.");
+            web_sessions::delete_for_user(&pool, user.id, None).await?;
+            println!(
+                "Disabled user {username}; their app passwords and browser sessions stop working \
+                 too."
+            );
             Ok(())
         }
     };

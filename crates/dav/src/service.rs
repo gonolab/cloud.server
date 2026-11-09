@@ -29,7 +29,7 @@ use http_body::Body;
 use http_body_util::{BodyExt as _, Empty, Full, Limited, combinators::UnsyncBoxBody};
 
 use crate::{
-    ctx::{Ctx, PropfindKind, RequestInfo},
+    ctx::{Ctx, PropfindKind, RequestInfo, destination_path},
     fs::ScopedFs,
     identity::Identity,
     locks::{CtxBody, with_ctx},
@@ -55,6 +55,18 @@ pub struct OcInfo {
     pub permissions: &'static str,
     /// `X-OC-MTime` was applied (`X-OC-MTime: accepted`).
     pub mtime_accepted: bool,
+}
+
+impl OcInfo {
+    /// The headers describing `entry`.
+    pub fn for_entry(entry: &Entry, instance_id: &str, mtime_accepted: bool) -> Self {
+        Self {
+            etag: format!("\"{}\"", entry.etag),
+            file_id: entry.file_id.map(|id| props::oc_id(id, instance_id)),
+            permissions: entry.permissions,
+            mtime_accepted,
+        }
+    }
 }
 
 /// The WebDAV endpoint. Cheap to clone.
@@ -152,6 +164,20 @@ fn raw_destination(value: &str) -> Option<String> {
     Some(path.split(['?', '#']).next().unwrap_or_default().to_owned())
 }
 
+/// Parses a `Destination` header of `identity` with the checks [`DavService::handle`] applies:
+/// `400` for a malformed value or one whose path has dot segments, NUL bytes or encoded
+/// slashes, `403` for a location outside the identity's WebDAV roots (another user's tree).
+pub fn parse_destination(identity: &Identity, value: &str) -> Result<DavPath, StatusCode> {
+    let raw = raw_destination(value).ok_or(StatusCode::BAD_REQUEST)?;
+    if !path_is_clean(&raw) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    if resolve::dav_root_len(identity, &percent_decode(raw.as_bytes())).is_none() {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    destination_path(value).ok_or(StatusCode::BAD_REQUEST)
+}
+
 impl DavService {
     /// Wraps the single handler and its file system.
     pub fn new(handler: DavHandler<Ctx>, fs: ScopedFs) -> Self {
@@ -178,15 +204,10 @@ impl DavService {
             .get(header::HeaderName::from_static("destination"))
             .and_then(|value| value.to_str().ok())
             .map(str::to_owned);
-        if let Some(destination) = &destination {
-            match raw_destination(destination) {
-                Some(raw) if path_is_clean(&raw) => {
-                    if resolve::dav_root_len(&identity, &percent_decode(raw.as_bytes())).is_none() {
-                        return simple(StatusCode::FORBIDDEN);
-                    }
-                }
-                _ => return simple(StatusCode::BAD_REQUEST),
-            }
+        if let Some(destination) = &destination
+            && let Err(status) = parse_destination(&identity, destination)
+        {
+            return simple(status);
         }
 
         let mut info = RequestInfo::from_parts(&parts);
@@ -262,14 +283,7 @@ impl DavService {
     }
 
     fn oc_info(&self, entry: &Entry, mtime_accepted: bool) -> OcInfo {
-        OcInfo {
-            etag: format!("\"{}\"", entry.etag),
-            file_id: entry
-                .file_id
-                .map(|id| props::oc_id(id, self.fs.instance_id())),
-            permissions: entry.permissions,
-            mtime_accepted,
-        }
+        OcInfo::for_entry(entry, self.fs.instance_id(), mtime_accepted)
     }
 
     /// The checks described in the module documentation. Returns a response when the request
@@ -335,7 +349,6 @@ fn writable_target(identity: &Identity, path: &DavPath) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ctx::destination_path;
 
     #[test]
     fn dot_segments_nul_and_encoded_slashes_are_unclean() {

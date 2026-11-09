@@ -141,6 +141,11 @@ impl ScopedFs {
         &self.inner.meta
     }
 
+    /// The data directory layout.
+    pub fn layout(&self) -> &DataLayout {
+        &self.inner.layout
+    }
+
     /// The installation's instance id (suffix of `oc:id`).
     pub fn instance_id(&self) -> &str {
         &self.inner.instance_id
@@ -596,6 +601,77 @@ impl ScopedFs {
         }))
     }
 
+    // -----------------------------------------------------------------------------------------
+    // Files assembled outside dav-server (chunked upload)
+    // -----------------------------------------------------------------------------------------
+
+    /// Resolves the destination of an upload: it must be a writable location inside a mount
+    /// that is not the mount root, exactly like the target of a PUT.
+    pub fn upload_target(ctx: &Ctx, path: &DavPath) -> FsResult<Location> {
+        Self::replaceable(ctx, path).map(|(location, _)| location)
+    }
+
+    /// What is at `location` now, or `None` if nothing is.
+    pub async fn current(&self, ctx: &Ctx, location: &Location) -> FsResult<Option<Arc<Entry>>> {
+        match self.lookup(ctx, location).await {
+            Ok(entry) => Ok(Some(entry)),
+            Err(FsError::NotFound) => Ok(None),
+            Err(err) => Err(err),
+        }
+    }
+
+    /// Installs a finished file at `location` (from [`Self::upload_target`]), replacing the
+    /// file there, and records the new version in the MetaStore.
+    ///
+    /// `temp` must be a complete, synced file on the data directory's file system (for
+    /// example in `tmp/`). It is renamed into place atomically, after checking (again) that
+    /// the parent is a real directory inside the tree and that the target is not a
+    /// collection, and the parent directory is synced so that the rename survives a crash.
+    /// Like every write, this runs to completion even if the request is dropped. On error,
+    /// `temp` is left for the caller to remove.
+    ///
+    /// Returns the new entry and whether a file was replaced.
+    pub async fn install_file(
+        &self,
+        ctx: &Ctx,
+        location: Location,
+        temp: PathBuf,
+    ) -> FsResult<(Arc<Entry>, bool)> {
+        if !location.writable(ctx.identity()) || location.is_mount_root(ctx.identity()) {
+            return Err(FsError::Forbidden);
+        }
+        let storage = location.storage().cloned().ok_or(FsError::Forbidden)?;
+        let owner = ctx.identity().user_id;
+        self.ensure_user(owner).await?;
+        let root = self.user_root(owner);
+        let fs = self.clone();
+        let ctx2 = ctx.clone();
+        let (entry, replaced) = detached(async move {
+            let rel = storage.clone();
+            let (stat, replaced) = blocking(move || {
+                check_parent(&root, &rel)?;
+                let replaced = match lstat_beneath(&root, &rel)? {
+                    Some(meta) if meta.is_dir() => {
+                        return Err(io::Error::new(io::ErrorKind::AlreadyExists, "collection"));
+                    }
+                    existing => existing.is_some(),
+                };
+                let target = rel.to_fs_path(&root);
+                std::fs::rename(&temp, &target)?;
+                if let Some(parent) = target.parent() {
+                    std::fs::File::open(parent)?.sync_all()?;
+                }
+                Ok((disk_stat(&std::fs::symlink_metadata(&target)?), replaced))
+            })
+            .await?;
+            let entry = fs.record_write(&ctx2, location, stat).await?;
+            Ok((entry, replaced))
+        })
+        .await?;
+        ctx.set_outcome(entry.clone());
+        Ok((entry, replaced))
+    }
+
     async fn open_for_read(&self, ctx: &Ctx, path: &DavPath) -> FsResult<Box<dyn DavFile>> {
         let entry = self.entry(ctx, path).await?;
         let storage = entry
@@ -1001,13 +1077,14 @@ fn copy_tree(from: &Path, to: &Path, depth_zero: bool) -> io::Result<Vec<(RelPat
 
 /// Free space for unprivileged users on the file system holding `path`.
 #[cfg(unix)]
-pub(crate) fn free_space(path: &Path) -> Option<u64> {
+pub fn free_space(path: &Path) -> Option<u64> {
     let stat = rustix::fs::statvfs(path).ok()?;
     Some(stat.f_bavail.saturating_mul(stat.f_frsize))
 }
 
+/// Free space for unprivileged users on the file system holding `path` (unknown here).
 #[cfg(not(unix))]
-pub(crate) fn free_space(_path: &Path) -> Option<u64> {
+pub fn free_space(_path: &Path) -> Option<u64> {
     None
 }
 

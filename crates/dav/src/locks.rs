@@ -178,6 +178,74 @@ impl SqliteLs {
     }
 }
 
+/// The lock among `covering` (the live locks that apply to a path) that forbids a write, given
+/// which locks the request holds: an exclusive lock it does not hold, or, if it holds none of
+/// them, a shared one.
+fn conflict_among(covering: Vec<Lock>, holds: impl Fn(&Lock) -> bool) -> Option<Lock> {
+    let mut holds_one = false;
+    let mut first_shared = None;
+    for lock in covering {
+        if holds(&lock) {
+            holds_one = true;
+        } else if !lock.shared {
+            return Some(lock);
+        } else {
+            first_shared.get_or_insert(lock);
+        }
+    }
+    if holds_one { None } else { first_shared }
+}
+
+/// The lock that keeps `principal`, submitting `tokens`, from writing the file `storage` of
+/// `owner`, if any. These are the rules dav-server applies to a PUT (see [`SqliteLs`]'s
+/// `check`), for writes that do not go through dav-server, such as the assembly of a chunked
+/// upload.
+pub async fn write_conflict(
+    store: &LockStore,
+    owner: i64,
+    storage: &RelPath,
+    principal: &str,
+    tokens: &[String],
+) -> gono_core::Result<Option<Lock>> {
+    let covering = store.covering(owner, storage, db::unix_now()).await?;
+    Ok(conflict_among(covering, |lock| {
+        tokens.contains(&lock.token) && lock.principal.as_deref() == Some(principal)
+    }))
+}
+
+/// The state tokens (lock tokens) a request submits in its `If` header (RFC 4918, 10.4):
+/// every `<...>` inside a parenthesized list. Entity tags (`[...]`) and resource tags (`<...>`
+/// before a list) are skipped.
+pub fn submitted_tokens(headers: &http::HeaderMap) -> Vec<String> {
+    let mut tokens = Vec::new();
+    for value in headers.get_all("if") {
+        let Ok(value) = value.to_str() else { continue };
+        let mut in_list = false;
+        let mut chars = value.chars();
+        while let Some(c) = chars.next() {
+            match c {
+                '(' => in_list = true,
+                ')' => in_list = false,
+                '[' => {
+                    for c in chars.by_ref() {
+                        if c == ']' {
+                            break;
+                        }
+                    }
+                }
+                '<' => {
+                    let token: String = chars.by_ref().take_while(|&c| c != '>').collect();
+                    if in_list && !token.is_empty() {
+                        tokens.push(token);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    tokens
+}
+
 /// Serializes the client's `<D:owner>` element so that it parses back.
 ///
 /// dav-server renames the element to the `D` prefix without declaring it (the request may have
@@ -348,18 +416,7 @@ impl DavLockSystem for SqliteLs {
                     log_error(&err);
                     Self::refusal(&path)
                 })?;
-            let mut holds_one = false;
-            let mut first_shared = None;
-            for lock in covering {
-                if holds(&lock) {
-                    holds_one = true;
-                } else if !lock.shared {
-                    return Err(Self::to_dav(&ctx, &target, lock, now));
-                } else {
-                    first_shared.get_or_insert(lock);
-                }
-            }
-            if !holds_one && let Some(lock) = first_shared {
+            if let Some(lock) = conflict_among(covering, holds) {
                 return Err(Self::to_dav(&ctx, &target, lock, now));
             }
 
@@ -422,5 +479,50 @@ impl DavLockSystem for SqliteLs {
                 .map_err(|err| log_error(&err))
         }
         .boxed()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn state_tokens_come_from_parenthesized_lists() {
+        let mut headers = http::HeaderMap::new();
+        headers.insert(
+            "if",
+            "<http://h/a> (<opaquelocktoken:1> [\"etag\"]) (Not <urn:x>)"
+                .parse()
+                .unwrap(),
+        );
+        assert_eq!(submitted_tokens(&headers), ["opaquelocktoken:1", "urn:x"]);
+        assert!(submitted_tokens(&http::HeaderMap::new()).is_empty());
+    }
+
+    fn lock(token: &str, shared: bool) -> Lock {
+        Lock {
+            token: token.into(),
+            owner_id: 1,
+            rel_path: RelPath::root(),
+            principal: Some("alice".into()),
+            owner_xml: None,
+            shared,
+            deep: true,
+            created_at: 0,
+            timeout_at: i64::MAX,
+        }
+    }
+
+    #[test]
+    fn conflicts_follow_the_write_rules() {
+        let held = |token: &'static str| move |lock: &Lock| lock.token == token;
+        assert_eq!(conflict_among(vec![lock("a", false)], held("a")), None);
+        assert_eq!(
+            conflict_among(vec![lock("a", false)], held("b")).map(|l| l.token),
+            Some("a".to_owned())
+        );
+        let shared = vec![lock("a", true), lock("b", true)];
+        assert_eq!(conflict_among(shared.clone(), held("b")), None);
+        assert!(conflict_among(shared, held("c")).is_some());
     }
 }

@@ -3,7 +3,8 @@
 //! ```text
 //! <data_dir>/
 //!   files/<user id>/     the user's file tree, served as their WebDAV root
-//!   uploads/<user id>/   staging area of Nextcloud chunked uploads
+//!   uploads/<user id>/   staging area of Nextcloud chunked uploads, one directory per
+//!                        session (see [`DataLayout::upload_session_dir`])
 //!   tmp/                 partial files of PUT requests in progress; emptied at startup
 //!   deleted/             trees of deleted users, moved here by `user delete`
 //! ```
@@ -75,6 +76,16 @@ impl DataLayout {
     /// One user's chunked upload staging directory.
     pub fn user_uploads(&self, user_id: i64) -> PathBuf {
         self.uploads_root().join(user_id.to_string())
+    }
+
+    /// Directory holding the chunks of one upload session: `uploads/<user id>/<digest>/`.
+    ///
+    /// Upload ids are chosen by clients, so the directory is named by the first 16 bytes of
+    /// the SHA-256 of the id (32 hex digits) instead of the id itself: any id maps to a safe
+    /// name, and ids that differ only in case stay apart on case-insensitive file systems.
+    pub fn upload_session_dir(&self, user_id: i64, upload_id: &str) -> PathBuf {
+        self.user_uploads(user_id)
+            .join(upload_session_dir_name(upload_id))
     }
 
     /// Creates the data directory and its fixed subdirectories. Used by `init`; existing
@@ -263,6 +274,16 @@ pub fn create_private_dir_all(path: &Path) -> Result<()> {
     builder
         .create(path)
         .map_err(|source| io_error(path, source))
+}
+
+/// Name of the directory of an upload session (see [`DataLayout::upload_session_dir`]).
+pub fn upload_session_dir_name(upload_id: &str) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(upload_id.as_bytes())
+        .iter()
+        .take(16)
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 #[cfg(test)]

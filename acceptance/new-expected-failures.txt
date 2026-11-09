@@ -6,19 +6,6 @@
 # regression tests of legacy defects 1-4 that do not need a later phase. What remains are the
 # Nextcloud protocol surface (phase 3) and the web admin UI (phase 4).
 
-# Phase 3: chunked upload v2. /remote.php/dav/uploads/<user>/ only authorizes so far (403 for
-# other users and read-only scopes) and answers 501 otherwise.
-nextcloud::chunked_upload_assembles_the_file
-nextcloud::chunked_upload_reports_the_final_etag
-nextcloud::chunked_upload_overwrites_an_existing_file
-nextcloud::chunked_upload_rejects_invalid_chunk_names
-nextcloud::chunked_upload_rejects_a_mismatched_destination
-nextcloud::chunked_upload_rejects_an_impossible_total_length
-nextcloud::chunked_upload_can_be_cancelled
-nextcloud::dir_etag_propagates_on_chunked_upload
-# Defect 5 (OC-Total-Length is not verified) belongs to the chunked upload implementation.
-nextcloud::regression_chunked_upload_verifies_total_length
-
 # Phase 3: Login Flow v2 (/index.php/login/v2) is not routed yet.
 login_flow::login_flow_init_returns_poll_and_login_urls
 login_flow::login_flow_poll_is_pending_until_the_user_logs_in

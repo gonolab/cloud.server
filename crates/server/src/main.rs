@@ -5,6 +5,7 @@ mod auth;
 mod cli;
 mod client_ip;
 mod commands;
+mod janitor;
 mod logging;
 mod nextcloud;
 mod password_input;

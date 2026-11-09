@@ -14,12 +14,14 @@ use gono_core::{
     users,
 };
 use gono_dav::{DavService, ScopedFs, locks::SqliteLs};
+use gono_nextcloud::chunking::ChunkedUploads;
 use tokio::net::TcpListener;
 
 use super::load_config;
 use crate::{
     app::{self, AppState},
     auth::Authenticator,
+    janitor::Janitor,
     logging::{self, Destination},
     ratelimit::RateLimiter,
     shutdown,
@@ -78,21 +80,29 @@ async fn serve(config: Config) -> anyhow::Result<()> {
         "listening"
     );
 
+    let dav = dav_service(
+        Duration::from_secs(config.webdav.max_lock_timeout_secs),
+        layout,
+        &pool,
+    )
+    .await?;
+    let uploads = ChunkedUploads::new(dav.fs().clone(), LockStore::new(pool.clone()));
+    let janitor = Janitor {
+        uploads: uploads.clone(),
+    }
+    .spawn();
     let state = AppState {
         db: pool.clone(),
         auth: Arc::new(Authenticator::new(
             pool.clone(),
             Arc::new(RateLimiter::new()),
         )),
-        dav: dav_service(
-            Duration::from_secs(config.webdav.max_lock_timeout_secs),
-            layout,
-            &pool,
-        )
-        .await?,
+        dav,
+        uploads,
         trusted_proxies: Arc::new(config.server.trusted_proxies.clone()),
     };
     let result = shutdown::serve(listener, app::router(state)).await;
+    janitor.abort();
     pool.close().await;
     tracing::info!("stopped");
     result

@@ -168,6 +168,24 @@ pub fn client_for_storage(
     Some(mount.mount_path.join_path(&below))
 }
 
+/// A location through which `identity` may write (create or replace) the storage path
+/// `storage`: inside a writable mount, and not that mount's root. Used where a request names a
+/// storage path only, such as a chunk of an upload whose destination was fixed earlier.
+pub fn writable_location(identity: &Identity, storage: &RelPath) -> Option<Location> {
+    identity
+        .mounts
+        .iter()
+        .enumerate()
+        .find_map(|(index, mount)| {
+            let below = storage.strip_prefix(&mount.storage_path)?;
+            (mount.writable && !below.is_root()).then(|| Location::Storage {
+                mount: index,
+                client: mount.mount_path.join_path(&below),
+                storage: storage.clone(),
+            })
+        })
+}
+
 /// Builds the DAV path `<root><client path>` from a WebDAV root such as
 /// `/remote.php/dav/files/alice`.
 pub fn dav_path(root: &[u8], client: &RelPath, collection: bool) -> Option<DavPath> {
@@ -318,6 +336,21 @@ mod tests {
             Location::Virtual { .. }
         ));
         assert_eq!(mounts_below(&id, &RelPath::parse("a").unwrap()).len(), 2);
+    }
+
+    #[test]
+    fn writable_locations_skip_read_only_mounts_and_mount_roots() {
+        let id = identity(vec![
+            mount("/Docs", "/docs", true),
+            mount("/Photos", "/docs/photos", false),
+        ]);
+        let found = writable_location(&id, &RelPath::parse("docs/a.txt").unwrap()).unwrap();
+        assert_eq!(found.client().as_str(), "Docs/a.txt");
+        assert!(writable_location(&id, &RelPath::parse("docs").unwrap()).is_none());
+        assert!(writable_location(&id, &RelPath::parse("other/a.txt").unwrap()).is_none());
+        // Reached through the writable mount even though a read-only one shows it too.
+        let nested = writable_location(&id, &RelPath::parse("docs/photos/x").unwrap()).unwrap();
+        assert_eq!(nested.client().as_str(), "Docs/photos/x");
     }
 
     #[test]

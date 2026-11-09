@@ -11,6 +11,7 @@
 //! - [`users`]: user account storage.
 //! - [`app_passwords`]: device credentials and their mount scopes.
 //! - [`locks`]: persistent WebDAV locks.
+//! - [`uploads`]: chunked upload sessions.
 //! - [`error`]: the domain error types.
 
 pub mod app_passwords;
@@ -24,6 +25,7 @@ pub mod path;
 pub mod settings;
 pub mod storage;
 pub mod types;
+pub mod uploads;
 pub mod users;
 
 pub use config::Config;

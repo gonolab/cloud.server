@@ -27,6 +27,10 @@ const RELEASED_MIGRATIONS: &[(i64, &str)] = &[
         2,
         "7a726883aaa0e53361d7943f3e4a273276b287f2c5a25eba4fead40e7d23ba788ce8fadede635c3433f04a3e41cdcaa3",
     ),
+    (
+        3,
+        "293fe61b0a6bf2df3c2308fb83440e553a2662b20fc66227f10a2aa6f06ddfa6a02e7dc0f36f1129e8edbf90cdb1fd61",
+    ),
 ];
 
 fn db_config(dir: &Path) -> DbConfig {

@@ -7,9 +7,9 @@
 //!   served by the single `DavHandler` inside [`DavService`], except `REPORT`, which goes to
 //!   [`gono_dav::report`] (the `filter-files` favorites report). Requests are authenticated
 //!   with an app password; `<user>` must be the authenticated user.
-//! - `/remote.php/dav/uploads/<user>/...`: Nextcloud chunked upload. Only authorization is in
-//!   place so far (other users' namespaces and read-only scopes are refused); the protocol
-//!   itself answers 501 until it is implemented.
+//! - `/remote.php/dav/uploads/<user>/...`: Nextcloud chunked upload v2
+//!   ([`gono_nextcloud::chunking`]). Other users' namespaces and app passwords without any
+//!   writable mount are refused with 403 before the protocol is looked at.
 //!
 //! Every response to a WebDAV request passes [`OcHeadersLayer`], which adds the `OC-ETag`,
 //! `OC-FileId` and `X-NC-Permissions` headers, and every request is logged once with secrets
@@ -28,6 +28,7 @@ use axum::{
 };
 use gono_core::db;
 use gono_dav::{DavService, Identity, OcHeadersLayer, report, resolve::FILES_ROOT};
+use gono_nextcloud::chunking::{ChunkedUploads, UPLOADS_ROOT};
 use ipnet::IpNet;
 
 use crate::{
@@ -45,6 +46,8 @@ pub struct AppState {
     pub auth: Arc<Authenticator>,
     /// The WebDAV endpoint with the single `DavHandler`.
     pub dav: DavService,
+    /// Chunked upload v2.
+    pub uploads: ChunkedUploads,
     /// Peers whose forwarding headers are trusted.
     pub trusted_proxies: Arc<Vec<IpNet>>,
 }
@@ -200,7 +203,8 @@ async fn serve_dav(state: &AppState, identity: Arc<Identity>, request: Request) 
     state.dav.handle(identity, request).await.map(Body::new)
 }
 
-/// `/remote.php/dav/uploads/<user>/...`: authorization only, see the module documentation.
+/// `/remote.php/dav/uploads/<user>/...`: chunked upload v2 ([`ChunkedUploads`]) in the
+/// authenticated user's own namespace, for app passwords that can write somewhere.
 async fn uploads(
     State(state): State<AppState>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
@@ -210,12 +214,12 @@ async fn uploads(
         Ok(identity) => identity,
         Err(rejection) => return rejection.into_response(),
     };
-    let own = url_user(request.uri().path(), "/remote.php/dav/uploads/").as_deref()
-        == Some(identity.username.as_str());
+    let own =
+        url_user(request.uri().path(), UPLOADS_ROOT).as_deref() == Some(identity.username.as_str());
     if !own || !identity.can_write_somewhere() {
         return StatusCode::FORBIDDEN.into_response();
     }
-    StatusCode::NOT_IMPLEMENTED.into_response()
+    state.uploads.handle(identity, request).await.map(Body::new)
 }
 
 #[cfg(test)]
@@ -240,8 +244,9 @@ mod tests {
     use crate::ratelimit::RateLimiter;
 
     struct Fixture {
-        _dir: tempfile::TempDir,
+        dir: tempfile::TempDir,
         router: Router,
+        state: AppState,
         full: String,
         view: String,
     }
@@ -290,15 +295,21 @@ mod tests {
         let dav = crate::commands::serve::dav_service(Duration::from_secs(600), layout, &pool)
             .await
             .unwrap();
+        let uploads = ChunkedUploads::new(
+            dav.fs().clone(),
+            gono_core::locks::LockStore::new(pool.clone()),
+        );
         let state = AppState {
             db: pool.clone(),
             auth: Arc::new(Authenticator::new(pool, Arc::new(RateLimiter::new()))),
             dav,
+            uploads,
             trusted_proxies: Arc::new(Vec::new()),
         };
         Fixture {
-            _dir: dir,
-            router: router(state),
+            dir,
+            router: router(state.clone()),
+            state,
             full: full.expose_secret().to_owned(),
             view: view.expose_secret().to_owned(),
         }
@@ -690,29 +701,261 @@ mod tests {
         );
     }
 
+    const UPLOADS: &str = "/remote.php/dav/uploads/alice";
+
     #[tokio::test]
-    async fn the_upload_namespace_is_authorized_but_not_implemented_yet() {
+    async fn chunked_uploads_assemble_resume_and_respect_scopes() {
         let f = fixture().await;
-        let own = "/remote.php/dav/uploads/alice/session";
+        let full = Some(f.full.as_str());
+        let destination = "http://localhost/remote.php/dav/files/alice/big.bin";
+        let session = format!("{UPLOADS}/s1");
+        let created = f
+            .send(
+                "MKCOL",
+                &session,
+                full,
+                &[("Destination", destination), ("OC-Total-Length", "11")],
+                "",
+            )
+            .await;
+        assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
         assert_eq!(
-            f.send("MKCOL", own, Some(&f.full), &[], "").await.status,
-            StatusCode::NOT_IMPLEMENTED
+            f.send("MKCOL", &session, full, &[], "").await.status,
+            StatusCode::METHOD_NOT_ALLOWED,
+            "the session exists"
         );
-        assert_eq!(
-            f.send("MKCOL", own, Some(&f.view), &[], "").await.status,
-            StatusCode::FORBIDDEN
+        for (name, body) in [("00002", "world"), ("00001", "hello ")] {
+            let chunk = f
+                .send("PUT", &format!("{session}/{name}"), full, &[], body)
+                .await;
+            assert_eq!(chunk.status, StatusCode::CREATED, "{}", chunk.body);
+        }
+        // A resuming client lists what arrived.
+        let listing = f
+            .send("PROPFIND", &session, full, &[("Depth", "1")], "")
+            .await;
+        assert_eq!(listing.status, StatusCode::MULTI_STATUS);
+        assert!(
+            listing
+                .body
+                .contains("/remote.php/dav/uploads/alice/s1/00001</d:href>")
         );
+        assert!(
+            listing
+                .body
+                .contains("<d:getcontentlength>6</d:getcontentlength>"),
+            "{}",
+            listing.body
+        );
+
+        let short = f
+            .send(
+                "MOVE",
+                &format!("{session}/.file"),
+                full,
+                &[("Destination", destination), ("OC-Total-Length", "12")],
+                "",
+            )
+            .await;
+        assert_eq!(short.status, StatusCode::BAD_REQUEST, "differs from MKCOL");
+        let moved = f
+            .send(
+                "MOVE",
+                &format!("{session}/.file"),
+                full,
+                &[
+                    ("Destination", destination),
+                    ("OC-Total-Length", "11"),
+                    ("X-OC-MTime", "1700000000"),
+                ],
+                "",
+            )
+            .await;
+        assert_eq!(moved.status, StatusCode::CREATED, "{}", moved.body);
+        assert_eq!(moved.header("x-oc-mtime"), "accepted");
+        assert_eq!(moved.header("etag"), moved.header("oc-etag"));
+        assert!(moved.header("oc-fileid").len() > 8);
+        let get = f
+            .send("GET", &format!("{FILES}/big.bin"), full, &[], "")
+            .await;
+        assert_eq!(get.body, "hello world");
+        assert_eq!(get.header("etag"), moved.header("etag"));
         assert_eq!(
             f.send(
-                "MKCOL",
-                "/remote.php/dav/uploads/bob/session",
-                Some(&f.full),
-                &[],
+                "MOVE",
+                &format!("{session}/.file"),
+                full,
+                &[("Destination", destination)],
                 ""
             )
             .await
             .status,
+            StatusCode::NOT_FOUND,
+            "the session is consumed"
+        );
+
+        // Overwrite with a stale If-Match is refused; with the current ETag it replaces (204).
+        let session = format!("{UPLOADS}/s2");
+        f.send("MKCOL", &session, full, &[], "").await;
+        f.send("PUT", &format!("{session}/1"), full, &[], "new")
+            .await;
+        let stale = f
+            .send(
+                "MOVE",
+                &format!("{session}/.file"),
+                full,
+                &[("Destination", destination), ("If-Match", "\"stale\"")],
+                "",
+            )
+            .await;
+        assert_eq!(stale.status, StatusCode::PRECONDITION_FAILED);
+        let current = get.header("etag");
+        let replaced = f
+            .send(
+                "MOVE",
+                &format!("{session}/.file"),
+                full,
+                &[("Destination", destination), ("If-Match", current.as_str())],
+                "",
+            )
+            .await;
+        assert_eq!(replaced.status, StatusCode::NO_CONTENT, "{}", replaced.body);
+        assert_eq!(replaced.header("oc-fileid"), moved.header("oc-fileid"));
+
+        // Scopes: read-only app passwords and other users' namespaces are refused.
+        assert_eq!(
+            f.send("MKCOL", &format!("{UPLOADS}/s3"), Some(&f.view), &[], "")
+                .await
+                .status,
             StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            f.send("MKCOL", "/remote.php/dav/uploads/bob/s3", full, &[], "")
+                .await
+                .status,
+            StatusCode::FORBIDDEN
+        );
+        let foreign = f
+            .send(
+                "MKCOL",
+                &format!("{UPLOADS}/s3"),
+                full,
+                &[("Destination", "http://localhost/remote.php/dav/files/bob/x")],
+                "",
+            )
+            .await;
+        assert_eq!(foreign.status, StatusCode::FORBIDDEN);
+        assert_eq!(
+            f.send("PUT", &format!("{UPLOADS}/missing/1"), full, &[], "x")
+                .await
+                .status,
+            StatusCode::NOT_FOUND
+        );
+    }
+
+    #[tokio::test]
+    async fn the_janitor_removes_expired_and_orphaned_uploads() {
+        let f = fixture().await;
+        let full = Some(f.full.as_str());
+        let session = format!("{UPLOADS}/expiring");
+        f.send("MKCOL", &session, full, &[], "").await;
+        f.send("PUT", &format!("{session}/1"), full, &[], "x").await;
+        f.send("MKCOL", &format!("{UPLOADS}/live"), full, &[], "")
+            .await;
+        sqlx::query("UPDATE upload_sessions SET expires_at = 0 WHERE upload_id = 'expiring'")
+            .execute(&f.state.db)
+            .await
+            .unwrap();
+        let uploads = f.dir.path().join("data/uploads/1");
+        let old_orphan = uploads.join("0123456789abcdef0123456789abcdef");
+        let new_orphan = uploads.join("fedcba9876543210fedcba9876543210");
+        for dir in [&old_orphan, &new_orphan] {
+            std::fs::create_dir(dir).unwrap();
+        }
+        let two_hours_ago = std::time::SystemTime::now() - Duration::from_secs(7200);
+        std::fs::File::open(&old_orphan)
+            .unwrap()
+            .set_modified(two_hours_ago)
+            .unwrap();
+        let session_dir = |id: &str| uploads.join(gono_core::storage::upload_session_dir_name(id));
+        assert!(session_dir("expiring").join("1").exists());
+
+        crate::janitor::Janitor {
+            uploads: f.state.uploads.clone(),
+        }
+        .run_once()
+        .await;
+        assert!(!session_dir("expiring").exists());
+        assert!(!old_orphan.exists());
+        assert!(new_orphan.exists(), "a MKCOL may be creating it right now");
+        assert!(session_dir("live").exists());
+        assert_eq!(
+            f.send("PROPFIND", &session, full, &[], "").await.status,
+            StatusCode::NOT_FOUND
+        );
+    }
+
+    #[tokio::test]
+    async fn chunked_uploads_respect_locks_and_can_be_cancelled() {
+        let f = fixture().await;
+        let full = Some(f.full.as_str());
+        f.send("PUT", &format!("{FILES}/locked.txt"), full, &[], "old")
+            .await;
+        let lock = f
+            .send(
+                "LOCK",
+                &format!("{FILES}/locked.txt"),
+                full,
+                &[],
+                r#"<?xml version="1.0"?><d:lockinfo xmlns:d="DAV:"><d:lockscope><d:exclusive/></d:lockscope><d:locktype><d:write/></d:locktype></d:lockinfo>"#,
+            )
+            .await;
+        assert_eq!(lock.status, StatusCode::OK, "{}", lock.body);
+        let token = lock.header("lock-token");
+        let destination = "/remote.php/dav/files/alice/locked.txt";
+        let session = format!("{UPLOADS}/locked");
+        f.send("MKCOL", &session, full, &[], "").await;
+        f.send("PUT", &format!("{session}/1"), full, &[], "new")
+            .await;
+        let refused = f
+            .send(
+                "MOVE",
+                &format!("{session}/.file"),
+                full,
+                &[("Destination", destination)],
+                "",
+            )
+            .await;
+        assert_eq!(refused.status, StatusCode::LOCKED, "{}", refused.body);
+        let held = format!("({token})");
+        let moved = f
+            .send(
+                "MOVE",
+                &format!("{session}/.file"),
+                full,
+                &[("Destination", destination), ("If", held.as_str())],
+                "",
+            )
+            .await;
+        assert_eq!(moved.status, StatusCode::NO_CONTENT, "{}", moved.body);
+
+        let cancelled = format!("{UPLOADS}/cancelled");
+        f.send("MKCOL", &cancelled, full, &[], "").await;
+        f.send("PUT", &format!("{cancelled}/1"), full, &[], "x")
+            .await;
+        assert_eq!(
+            f.send("PUT", &format!("{cancelled}/one"), full, &[], "x")
+                .await
+                .status,
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            f.send("DELETE", &cancelled, full, &[], "").await.status,
+            StatusCode::NO_CONTENT
+        );
+        assert_eq!(
+            f.send("PROPFIND", &cancelled, full, &[], "").await.status,
+            StatusCode::NOT_FOUND
         );
     }
 }

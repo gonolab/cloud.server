@@ -740,9 +740,18 @@ dependencies = [
 name = "gono-nextcloud"
 version = "1.0.0-dev"
 dependencies = [
+ "bytes",
+ "dav-server",
  "gono-core",
+ "gono-dav",
  "http",
+ "http-body",
+ "http-body-util",
+ "httpdate",
+ "rand",
  "serde_json",
+ "tokio",
+ "tracing",
  "xmltree",
 ]
 
@@ -763,6 +772,7 @@ dependencies = [
  "rpassword",
  "secrecy",
  "serde_json",
+ "sqlx",
  "tempfile",
  "tokio",
  "tower",

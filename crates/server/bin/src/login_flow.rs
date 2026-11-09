@@ -3,22 +3,26 @@
 //! | Request | Answer |
 //! |---|---|
 //! | `POST /index.php/login/v2` (or `/login/v2`) | Starts a flow. Anonymous; limited per client address and by [`login_flows::MAX_PENDING_FLOWS`]. |
-//! | `POST .../login/v2/poll` with `token` | `404` until the user approved the device, then the new app password, once. |
+//! | `POST .../login/v2/poll` with `token` (form body or query) | `404` until the user approved the device, then the new app password, once. |
 //! | `GET .../login/v2/flow/<login token>` | The sign-in page, the consent page (when signed in), or the result. |
 //! | `POST .../login/v2/flow/<login token>` | The forms of those pages: `action` = `login`, `grant`, `deny` or `logout`. |
 //!
 //! The pages need no JavaScript. Signing in uses the web login password, never an app
 //! password, and only creates a browser session ([`crate::web`]); the device gets nothing
 //! until the user presses "Grant access" on the consent page, which names the client. The
-//! app password is minted when the client polls next. Login tokens appear in page URLs only,
-//! which the request log redacts and the pages never leak as a referrer.
+//! app password is minted when the client polls next. Login tokens appear in page URLs, and
+//! Nextcloud iOS puts the poll token into the poll URL's query; the request log redacts both,
+//! and the pages never leak them as a referrer.
 
 use std::net::SocketAddr;
 
 use askama::Template;
 use axum::{
     Form,
-    extract::{ConnectInfo, Path, State},
+    extract::{
+        ConnectInfo, Path, Query, State,
+        rejection::{FormRejection, QueryRejection},
+    },
     http::{HeaderMap, HeaderValue, StatusCode, Uri, header},
     response::{IntoResponse, Response},
 };
@@ -102,7 +106,7 @@ pub async fn start(
     }
 }
 
-/// The poll request body.
+/// The `token` parameter of a poll request.
 #[derive(Deserialize)]
 pub struct PollForm {
     #[serde(default)]
@@ -110,11 +114,24 @@ pub struct PollForm {
 }
 
 /// `POST /index.php/login/v2/poll` and `POST /login/v2/poll`.
-pub async fn poll(State(state): State<AppState>, Form(form): Form<PollForm>) -> Response {
-    if form.token.is_empty() {
+///
+/// The token comes as a form body (Android, the desktop client) or as a query parameter of
+/// the `POST` without any body (Nextcloud iOS). Nextcloud reads either, so neither a content
+/// type nor a body is required here; a token in the body wins.
+pub async fn poll(
+    State(state): State<AppState>,
+    query: Result<Query<PollForm>, QueryRejection>,
+    body: Result<Form<PollForm>, FormRejection>,
+) -> Response {
+    let token = match (body, query) {
+        (Ok(Form(form)), _) if !form.token.is_empty() => form.token,
+        (_, Ok(Query(query))) => query.token,
+        _ => String::new(),
+    };
+    if token.is_empty() {
         return StatusCode::NOT_FOUND.into_response();
     }
-    match login_flows::complete(&state.db, &form.token, db::unix_now()).await {
+    match login_flows::complete(&state.db, &token, db::unix_now()).await {
         Ok(Some(credentials)) => {
             tracing::info!(
                 user = %credentials.username,

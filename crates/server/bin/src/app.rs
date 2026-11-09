@@ -1182,6 +1182,111 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn login_flow_poll_takes_the_token_from_the_query_too() {
+        // Nextcloud iOS polls with `POST .../poll?token=...` and no body or content type.
+        let f = fixture().await;
+        let ios = "Mozilla/5.0 (iOS) Nextcloud-iOS/35.2.2";
+        let start = f
+            .send(
+                "POST",
+                "/index.php/login/v2",
+                None,
+                &[("User-Agent", ios)],
+                "",
+            )
+            .await;
+        let start: serde_json::Value = serde_json::from_str(&start.body).unwrap();
+        let poll_token = start["poll"]["token"].as_str().unwrap().to_owned();
+        let login_token = start["login"]
+            .as_str()
+            .unwrap()
+            .rsplit('/')
+            .next()
+            .unwrap()
+            .to_owned();
+        let query_poll = format!("/index.php/login/v2/poll?token={poll_token}");
+
+        let pending = f.send("POST", &query_poll, None, &[], "").await;
+        assert_eq!(pending.status, StatusCode::NOT_FOUND, "{}", pending.body);
+        assert_eq!(
+            f.send("POST", "/index.php/login/v2/poll", None, &[], "")
+                .await
+                .status,
+            StatusCode::NOT_FOUND,
+            "no token at all"
+        );
+
+        let now = db::unix_now();
+        let flow = gono_server_core::login_flows::find(&f.state.db, &login_token, now)
+            .await
+            .unwrap()
+            .expect("pending flow");
+        assert!(
+            gono_server_core::login_flows::grant(&f.state.db, flow.id, 1, now)
+                .await
+                .unwrap()
+        );
+        // With a token in both places, the one in the body counts.
+        let wrong_query = f
+            .send(
+                "POST",
+                "/index.php/login/v2/poll?token=wrong",
+                None,
+                &[FORM],
+                &format!("token={poll_token}"),
+            )
+            .await;
+        assert_eq!(wrong_query.status, StatusCode::OK, "{}", wrong_query.body);
+        let completed: serde_json::Value = serde_json::from_str(&wrong_query.body).unwrap();
+        assert_eq!(completed["loginName"], "alice");
+        assert!(
+            completed["appPassword"]
+                .as_str()
+                .is_some_and(|p| !p.is_empty())
+        );
+        assert_eq!(
+            f.send("POST", &query_poll, None, &[], "").await.status,
+            StatusCode::NOT_FOUND,
+            "single use"
+        );
+
+        // The query alone completes a flow as well.
+        let start = f
+            .send("POST", "/login/v2", None, &[("User-Agent", ios)], "")
+            .await;
+        let start: serde_json::Value = serde_json::from_str(&start.body).unwrap();
+        let poll_token = start["poll"]["token"].as_str().unwrap().to_owned();
+        let login_token = start["login"].as_str().unwrap().rsplit('/').next().unwrap();
+        let flow = gono_server_core::login_flows::find(&f.state.db, login_token, now)
+            .await
+            .unwrap()
+            .expect("pending flow");
+        gono_server_core::login_flows::grant(&f.state.db, flow.id, 1, now)
+            .await
+            .unwrap();
+        let completed = f
+            .send(
+                "POST",
+                &format!("/login/v2/poll?token={poll_token}"),
+                None,
+                &[],
+                "",
+            )
+            .await;
+        assert_eq!(completed.status, StatusCode::OK, "{}", completed.body);
+        let labels: Vec<String> = app_passwords::list(&f.state.db, 1)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|p| p.label)
+            .collect();
+        assert!(
+            labels.iter().filter(|l| l.contains("iOS")).count() == 2,
+            "{labels:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn failed_web_sign_ins_share_the_device_rate_limit() {
         let f = fixture().await;
         let start = f.send("POST", "/login/v2", None, &[], "").await;

@@ -255,6 +255,31 @@ async fn regression_login_flow_mints_a_new_app_password() {
     revoke(&ctx, &web.user, &first_password).await;
 }
 
+/// Nextcloud iOS polls with `POST <endpoint>?token=<token>` and sends no body or content type.
+#[tokio::test]
+async fn login_flow_poll_accepts_the_token_as_a_query_parameter() {
+    let Some(ctx) = Ctx::bare() else { return };
+    let web = require!(ctx.web(), "GONO_ACCEPT_WEB_PASSWORD not set");
+    let flow = start_flow(&ctx, "/index.php/login/v2").await;
+    let mut endpoint = Url::parse(&flow.endpoint).expect("poll endpoint");
+    endpoint.query_pairs_mut().append_pair("token", &flow.token);
+    let poll_by_query = || send(&ctx.http, ctx.http.post(endpoint.clone()));
+
+    poll_by_query().await.expect(&[404]);
+    let browser = Browser::new("gono-acceptance browser");
+    if let Err(err) = browser.login(&flow.login, &web, AfterLogin::Grant).await {
+        panic!("logging in with the web password failed: {err}");
+    }
+    let done = poll_by_query().await;
+    done.expect(&[200]);
+    let body = done.json();
+    let password = body["appPassword"].as_str().unwrap_or_default().to_owned();
+    assert_eq!(body["loginName"], web.user.as_str(), "{body}");
+    assert!(!password.is_empty(), "{body}");
+    poll_by_query().await.expect(&[404]);
+    revoke(&ctx, &web.user, &password).await;
+}
+
 #[tokio::test]
 async fn web_password_is_not_a_device_credential() {
     let Some(ctx) = Ctx::bare() else { return };

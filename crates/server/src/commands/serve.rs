@@ -6,6 +6,7 @@ use anyhow::Context;
 use gono_core::{
     Config,
     db::{self, OpenMode},
+    storage::DataLayout,
     users,
 };
 use tokio::net::TcpListener;
@@ -49,6 +50,8 @@ async fn serve(config: Config) -> anyhow::Result<()> {
     if users::count(&pool).await? == 0 {
         tracing::warn!("no user accounts exist; run `gono-cloud init`");
     }
+    let layout = DataLayout::new(&config.storage.data_dir);
+    layout.open().context("open data directory")?;
 
     let bind = config.server.bind;
     let listener = TcpListener::bind(bind)

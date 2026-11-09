@@ -1,13 +1,15 @@
 //! `gono-cloud init`.
 
-use std::{fs, path::Path};
+use std::path::Path;
 
 use anyhow::Context;
 use gono_core::{
     Error, PRODUCT_NAME,
     config::LogLevel,
     db::{self, OpenMode},
-    password, users,
+    password,
+    storage::DataLayout,
+    users,
 };
 
 use super::load_config;
@@ -17,8 +19,8 @@ use crate::{
     password_input,
 };
 
-/// Creates the data directory and the database, applies the migrations and creates the first
-/// admin account.
+/// Creates the data directory layout and the database, applies the migrations and creates the
+/// first admin account with its storage directories.
 ///
 /// Refuses to run against a database that already has accounts. The admin's web login password
 /// is read from the terminal or stdin and is never printed or logged.
@@ -27,7 +29,8 @@ pub async fn run(config_path: &Path, args: InitArgs) -> anyhow::Result<()> {
     let _log_guard = logging::init(LogLevel::Warn, Destination::Stderr)?;
     let display_name = users::display_name_or_default(args.display_name.as_deref(), &args.admin)?;
 
-    create_private_dir(&config.storage.data_dir)?;
+    let layout = DataLayout::new(&config.storage.data_dir);
+    layout.create().context("create data directory")?;
     let pool = db::connect(&config.db, OpenMode::CreateIfMissing)
         .await
         .context("create database")?;
@@ -49,8 +52,12 @@ pub async fn run(config_path: &Path, args: InitArgs) -> anyhow::Result<()> {
             .await??;
     let password_hash = tokio::task::spawn_blocking(move || password::hash(&password)).await??;
 
-    users::create_initial_admin(&pool, &args.admin, &display_name, &password_hash).await?;
+    let user_id =
+        users::create_initial_admin(&pool, &args.admin, &display_name, &password_hash).await?;
     pool.close().await;
+    layout
+        .create_user(user_id)
+        .context("create the admin's storage directories")?;
 
     println!("Initialized {PRODUCT_NAME}.");
     println!();
@@ -60,15 +67,4 @@ pub async fn run(config_path: &Path, args: InitArgs) -> anyhow::Result<()> {
     println!();
     println!("Start the server with `gono-cloud serve`.");
     Ok(())
-}
-
-/// Creates `path` and its parents. On Unix, newly created directories get mode `0700`.
-fn create_private_dir(path: &Path) -> anyhow::Result<()> {
-    let mut builder = fs::DirBuilder::new();
-    builder.recursive(true);
-    #[cfg(unix)]
-    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
-    builder
-        .create(path)
-        .with_context(|| format!("create data directory {}", path.display()))
 }

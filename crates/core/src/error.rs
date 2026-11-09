@@ -31,6 +31,42 @@ pub enum Error {
         path: PathBuf,
     },
 
+    /// The configured data directory does not exist.
+    #[error(
+        "data directory {} does not exist; run `gono-cloud init` or fix storage.data_dir",
+        path.display()
+    )]
+    DataDirMissing {
+        /// Configured data directory.
+        path: PathBuf,
+    },
+
+    /// Two directories that must share a file system (for atomic renames) do not.
+    #[error(
+        "{} and {} are on different file systems; uploads are moved into place with an \
+         atomic rename, so the whole data directory must be on one file system",
+        first.display(),
+        second.display()
+    )]
+    CrossDevice {
+        /// First directory.
+        first: PathBuf,
+        /// Directory on a different file system.
+        second: PathBuf,
+    },
+
+    /// A new account's directory already holds files, probably of a deleted account with the
+    /// same id.
+    #[error(
+        "{} already exists and is not empty; it may belong to a deleted account with the same \
+         id. Move it away and try again",
+        path.display()
+    )]
+    UserDirNotEmpty {
+        /// The non-empty directory.
+        path: PathBuf,
+    },
+
     /// A file system operation failed.
     #[error("I/O error on {}", path.display())]
     Io {

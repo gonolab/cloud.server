@@ -32,6 +32,12 @@ trusted_proxies = ["127.0.0.1", "::1"]
 [storage]
 # Directory holding user files. It belongs to the server: change files only through WebDAV. If
 # you change them directly (SSH, Samba, rsync, ...), run `gono-cloud rescan` afterwards.
+# Created by `gono-cloud init` with this layout, which must sit on a single file system:
+#   files/<user id>/    each user's files
+#   uploads/<user id>/  chunked uploads in progress
+#   tmp/                partial uploads, emptied at startup
+#   deleted/            files of deleted users
+# File names are stored in Unicode NFC; names in other forms are hidden until `rescan`.
 # Required.
 data_dir = "data"
 

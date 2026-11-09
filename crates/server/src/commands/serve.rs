@@ -25,6 +25,7 @@ use crate::{
     logging::{self, Destination},
     ratelimit::RateLimiter,
     shutdown,
+    web::Web,
 };
 
 /// Runs the HTTP server until SIGTERM or Ctrl-C.
@@ -88,17 +89,28 @@ async fn serve(config: Config) -> anyhow::Result<()> {
     .await?;
     let uploads = ChunkedUploads::new(dav.fs().clone(), LockStore::new(pool.clone()));
     let janitor = Janitor {
+        db: pool.clone(),
         uploads: uploads.clone(),
     }
     .spawn();
+    let auth = Arc::new(Authenticator::new(
+        pool.clone(),
+        Arc::new(RateLimiter::new()),
+    ));
+    // The HTML sign-in shares the failed-attempt limiter of device authentication.
+    let web = Arc::new(Web::new(
+        pool.clone(),
+        auth.limiter().clone(),
+        &config.server.base_url,
+    ));
     let state = AppState {
         db: pool.clone(),
-        auth: Arc::new(Authenticator::new(
-            pool.clone(),
-            Arc::new(RateLimiter::new()),
-        )),
+        auth,
         dav,
         uploads,
+        web,
+        base_url: Arc::new(config.server.base_url.clone()),
+        flow_starts: Arc::new(RateLimiter::new()),
         trusted_proxies: Arc::new(config.server.trusted_proxies.clone()),
     };
     let result = shutdown::serve(listener, app::router(state)).await;

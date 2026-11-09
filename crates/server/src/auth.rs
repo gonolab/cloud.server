@@ -62,6 +62,12 @@ impl Authenticator {
         }
     }
 
+    /// The failed-attempt limiter, shared with every other sign-in entry point (the web
+    /// login of Login Flow v2 and the admin UI).
+    pub fn limiter(&self) -> &Arc<RateLimiter> {
+        &self.limiter
+    }
+
     /// Authenticates a request from `client` by its `Authorization: Basic` header.
     pub async fn authenticate(&self, client: IpAddr, headers: &HeaderMap) -> AuthOutcome {
         let Some((username, password)) = basic_credentials(headers) else {

@@ -12,6 +12,9 @@
 //! - [`app_passwords`]: device credentials and their mount scopes.
 //! - [`locks`]: persistent WebDAV locks.
 //! - [`uploads`]: chunked upload sessions.
+//! - [`login_flows`]: pending Login Flow v2 sign-ins.
+//! - [`web_sessions`]: browser sessions of the server's HTML pages.
+//! - [`secret`]: random tokens and their digests.
 //! - [`error`]: the domain error types.
 
 pub mod app_passwords;
@@ -19,14 +22,17 @@ pub mod config;
 pub mod db;
 pub mod error;
 pub mod locks;
+pub mod login_flows;
 pub mod meta;
 pub mod password;
 pub mod path;
+pub mod secret;
 pub mod settings;
 pub mod storage;
 pub mod types;
 pub mod uploads;
 pub mod users;
+pub mod web_sessions;
 
 pub use config::Config;
 pub use error::{ConfigError, Error, Result};

@@ -12,11 +12,10 @@
 
 use rand::RngExt as _;
 use secrecy::{ExposeSecret, SecretString};
-use sha2::{Digest, Sha256};
 use sqlx::FromRow;
 
 use crate::{
-    db::{self, Pool},
+    db::{self, Pool, Tx},
     error::{Error, Result},
     path::RelPath,
     types::{Permission, Username},
@@ -87,10 +86,24 @@ pub struct Device {
 }
 
 /// Generates a new app password token, for example `Ab3dE-fGh1j-KlMn0-pQrSt-Uv9Wx`.
+///
+/// Used for app passwords that a person may have to type (CLI, admin UI).
 pub fn generate_token() -> SecretString {
+    grouped_token(5)
+}
+
+/// Generates the token of an app password that is handed to a device directly (Login Flow
+/// v2): eight groups of five characters (about 238 bits). Nobody types these, so they can be
+/// longer than [`generate_token`]'s.
+pub fn generate_device_token() -> SecretString {
+    grouped_token(8)
+}
+
+/// `groups` groups of five random characters, separated by `-`.
+fn grouped_token(groups: usize) -> SecretString {
     let mut rng = rand::rng();
-    let mut token = String::with_capacity(29);
-    for index in 0..25 {
+    let mut token = String::with_capacity(groups * 6);
+    for index in 0..groups * 5 {
         if index > 0 && index % 5 == 0 {
             token.push('-');
         }
@@ -102,7 +115,7 @@ pub fn generate_token() -> SecretString {
 
 /// SHA-256 digest of a token, the value stored in `app_passwords.token_hash`.
 pub fn hash_token(token: &str) -> [u8; 32] {
-    Sha256::digest(token.as_bytes()).into()
+    crate::secret::digest(token)
 }
 
 /// Validates a label.
@@ -156,21 +169,35 @@ pub async fn create(
     let label = check_label(label)?;
     let scopes = check_scopes(scopes)?;
     let token = generate_token();
-    let hash = hash_token(token.expose_secret());
-
     let mut tx = db::begin_immediate(pool).await?;
+    let id = insert(&mut tx, user_id, &label, &scopes, expires_at, &token).await?;
+    tx.commit().await?;
+    Ok((id, token))
+}
+
+/// Inserts an app password with the given token inside an open transaction and returns its
+/// id. `label` and `scopes` must have passed [`check_label`] and [`check_scopes`].
+pub(crate) async fn insert(
+    tx: &mut Tx,
+    user_id: i64,
+    label: &str,
+    scopes: &[Scope],
+    expires_at: Option<i64>,
+    token: &SecretString,
+) -> Result<i64> {
+    let hash = hash_token(token.expose_secret());
     let id: i64 = sqlx::query_scalar(
         "INSERT INTO app_passwords (user_id, token_hash, label, created_at, expires_at) \
          VALUES (?1, ?2, ?3, ?4, ?5) RETURNING id",
     )
     .bind(user_id)
     .bind(&hash[..])
-    .bind(&label)
+    .bind(label)
     .bind(db::unix_now())
     .bind(expires_at)
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut **tx)
     .await?;
-    for scope in &scopes {
+    for scope in scopes {
         sqlx::query(
             "INSERT INTO app_password_scopes (app_password_id, mount_path, storage_path, \
              permission) VALUES (?1, ?2, ?3, ?4)",
@@ -179,11 +206,10 @@ pub async fn create(
         .bind(scope.mount_path.as_str())
         .bind(scope.storage_path.as_str())
         .bind(scope.permission.as_str())
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
     }
-    tx.commit().await?;
-    Ok((id, token))
+    Ok(id)
 }
 
 #[derive(FromRow)]

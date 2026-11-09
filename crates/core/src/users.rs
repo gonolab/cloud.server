@@ -177,6 +177,24 @@ pub async fn find(pool: &Pool, username: &Username) -> Result<Option<User>> {
         .await?)
 }
 
+#[derive(FromRow)]
+struct CredentialsRow {
+    #[sqlx(flatten)]
+    user: User,
+    password_hash: String,
+}
+
+/// Looks an account up by name together with its web login password hash, for signing in.
+/// Verify the password with [`crate::password::verify`].
+pub async fn credentials(pool: &Pool, username: &Username) -> Result<Option<(User, String)>> {
+    let sql = format!("SELECT {USER_COLUMNS}, password_hash FROM users WHERE username = ?1");
+    let row: Option<CredentialsRow> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
+        .bind(username.as_str())
+        .fetch_optional(pool)
+        .await?;
+    Ok(row.map(|row| (row.user, row.password_hash)))
+}
+
 /// Like [`find`], but a missing account is [`Error::UserNotFound`].
 pub async fn get(pool: &Pool, username: &Username) -> Result<User> {
     find(pool, username)

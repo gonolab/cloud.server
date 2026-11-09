@@ -4,12 +4,15 @@
 //! after startup and then every [`INTERVAL`]:
 //!
 //! - expired chunked upload sessions with their chunks, and chunk directories that belong to
-//!   no session ([`ChunkedUploads::purge`]).
+//!   no session ([`ChunkedUploads::purge`]);
+//! - expired Login Flow v2 sign-ins ([`login_flows::purge_expired`]);
+//! - expired browser sessions ([`web_sessions::purge_expired`]).
 //!
 //! Every pass is independent: a failure is logged and the next pass tries again.
 
 use std::time::Duration;
 
+use gono_core::{db, login_flows, web_sessions};
 use gono_nextcloud::chunking::ChunkedUploads;
 use tokio::task::JoinHandle;
 
@@ -19,6 +22,8 @@ pub const INTERVAL: Duration = Duration::from_secs(10 * 60);
 /// What the janitor cleans.
 #[derive(Debug, Clone)]
 pub struct Janitor {
+    /// The database.
+    pub db: db::Pool,
     /// Chunked uploads.
     pub uploads: ChunkedUploads,
 }
@@ -30,6 +35,17 @@ impl Janitor {
             Ok(0) => {}
             Ok(removed) => tracing::info!(removed, "removed expired chunked uploads"),
             Err(err) => tracing::warn!(error = %err, "cannot clean up chunked uploads"),
+        }
+        let now = db::unix_now();
+        match login_flows::purge_expired(&self.db, now).await {
+            Ok(0) => {}
+            Ok(removed) => tracing::debug!(removed, "removed expired Login Flow v2 sign-ins"),
+            Err(err) => tracing::warn!(error = %err, "cannot clean up Login Flow v2 sign-ins"),
+        }
+        match web_sessions::purge_expired(&self.db, now).await {
+            Ok(0) => {}
+            Ok(removed) => tracing::debug!(removed, "removed expired browser sessions"),
+            Err(err) => tracing::warn!(error = %err, "cannot clean up browser sessions"),
         }
     }
 

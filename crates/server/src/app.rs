@@ -3,6 +3,7 @@
 //! - `GET /healthz`: liveness and readiness probe.
 //! - `GET /status.php`, the connectivity probe `/index.php/204` and the OCS API under
 //!   `/ocs/v{1,2}.php/` (and the `/index.php/` aliases): see [`crate::nextcloud`].
+//! - Login Flow v2 under `/index.php/login/v2` and `/login/v2`: see [`crate::login_flow`].
 //! - `/remote.php/dav/files/<user>/...` and the legacy alias `/remote.php/webdav/...`: WebDAV,
 //!   served by the single `DavHandler` inside [`DavService`], except `REPORT`, which goes to
 //!   [`gono_dav::report`] (the `filter-files` favorites report). Requests are authenticated
@@ -24,17 +25,21 @@ use axum::{
     http::{HeaderMap, HeaderValue, StatusCode, header},
     middleware,
     response::{IntoResponse, Response},
-    routing::{any, get},
+    routing::{any, get, post},
 };
 use gono_core::db;
 use gono_dav::{DavService, Identity, OcHeadersLayer, report, resolve::FILES_ROOT};
 use gono_nextcloud::chunking::{ChunkedUploads, UPLOADS_ROOT};
 use ipnet::IpNet;
+use url::Url;
 
 use crate::{
     auth::{AuthOutcome, Authenticator, basic_challenge},
     client_ip::client_ip,
-    nextcloud, request_log,
+    login_flow, nextcloud,
+    ratelimit::RateLimiter,
+    request_log,
+    web::Web,
 };
 
 /// State shared by all request handlers.
@@ -48,6 +53,13 @@ pub struct AppState {
     pub dav: DavService,
     /// Chunked upload v2.
     pub uploads: ChunkedUploads,
+    /// Sessions, sign-in and CSRF checks of the HTML pages.
+    pub web: Arc<Web>,
+    /// Public origin of the server (`server.base_url`).
+    pub base_url: Arc<Url>,
+    /// Per-client limit on starting Login Flow v2 sign-ins (separate from the failed sign-in
+    /// limiter: starting a flow is not a failure).
+    pub flow_starts: Arc<RateLimiter>,
     /// Peers whose forwarding headers are trusted.
     pub trusted_proxies: Arc<Vec<IpNet>>,
 }
@@ -68,7 +80,19 @@ pub fn router(state: AppState) -> Router {
         .route("/ocs/v1.php/{*rest}", any(nextcloud::ocs))
         .route("/ocs/v2.php/{*rest}", any(nextcloud::ocs))
         .route("/index.php/ocs/v1.php/{*rest}", any(nextcloud::ocs))
-        .route("/index.php/ocs/v2.php/{*rest}", any(nextcloud::ocs));
+        .route("/index.php/ocs/v2.php/{*rest}", any(nextcloud::ocs))
+        .route("/index.php/login/v2", post(login_flow::start))
+        .route("/login/v2", post(login_flow::start))
+        .route("/index.php/login/v2/poll", post(login_flow::poll))
+        .route("/login/v2/poll", post(login_flow::poll))
+        .route(
+            "/index.php/login/v2/flow/{token}",
+            get(login_flow::page).post(login_flow::submit),
+        )
+        .route(
+            "/login/v2/flow/{token}",
+            get(login_flow::page).post(login_flow::submit),
+        );
     Router::new()
         .route("/healthz", get(healthz))
         .merge(nextcloud)
@@ -241,7 +265,6 @@ mod tests {
     use tower::ServiceExt as _;
 
     use super::*;
-    use crate::ratelimit::RateLimiter;
 
     struct Fixture {
         dir: tempfile::TempDir,
@@ -299,11 +322,16 @@ mod tests {
             dav.fs().clone(),
             gono_core::locks::LockStore::new(pool.clone()),
         );
+        let limiter = Arc::new(RateLimiter::new());
+        let base_url = Url::parse("http://localhost:8080").unwrap();
         let state = AppState {
             db: pool.clone(),
-            auth: Arc::new(Authenticator::new(pool, Arc::new(RateLimiter::new()))),
+            auth: Arc::new(Authenticator::new(pool.clone(), limiter.clone())),
             dav,
             uploads,
+            web: Arc::new(Web::new(pool, limiter, &base_url)),
+            base_url: Arc::new(base_url),
+            flow_starts: Arc::new(RateLimiter::new()),
             trusted_proxies: Arc::new(Vec::new()),
         };
         Fixture {
@@ -701,6 +729,269 @@ mod tests {
         );
     }
 
+    /// The `name=value` part of the `Set-Cookie` header for cookie `name`.
+    fn set_cookie(reply: &Reply, name: &str) -> Option<String> {
+        reply
+            .headers
+            .get_all("set-cookie")
+            .iter()
+            .filter_map(|value| value.to_str().ok())
+            .find(|value| value.starts_with(&format!("{name}=")))
+            .map(|value| value.split(';').next().unwrap().to_owned())
+    }
+
+    /// The value of the hidden `csrf` input of a page.
+    fn csrf_field(body: &str) -> String {
+        let pattern = "name=\"csrf\" value=\"";
+        let start = body.find(pattern).expect("csrf field") + pattern.len();
+        body[start..start + body[start..].find('"').unwrap()].to_owned()
+    }
+
+    const FORM: (&str, &str) = ("Content-Type", "application/x-www-form-urlencoded");
+
+    #[tokio::test]
+    async fn login_flow_needs_the_web_password_and_explicit_consent() {
+        let f = fixture().await;
+        let hash =
+            gono_core::password::hash(&secrecy::SecretString::from("correct horse".to_owned()))
+                .unwrap();
+        users::set_password_hash(&f.state.db, &Username::new("alice").unwrap(), &hash)
+            .await
+            .unwrap();
+
+        let desktop = "Mozilla/5.0 (Macintosh) mirall/3.13.0 (Nextcloud, osx-23.5.0)";
+        let start = f
+            .send(
+                "POST",
+                "/index.php/login/v2",
+                None,
+                &[("User-Agent", desktop)],
+                "",
+            )
+            .await;
+        assert_eq!(start.status, StatusCode::OK, "{}", start.body);
+        let start: serde_json::Value = serde_json::from_str(&start.body).unwrap();
+        let poll_token = start["poll"]["token"].as_str().unwrap().to_owned();
+        let poll_body = format!("token={poll_token}");
+        let login = start["login"].as_str().unwrap();
+        assert!(login.starts_with("http://localhost:8080/index.php/login/v2/flow/"));
+        let page = login.trim_start_matches("http://localhost:8080").to_owned();
+        let poll = || {
+            f.send(
+                "POST",
+                "/index.php/login/v2/poll",
+                None,
+                &[FORM],
+                &poll_body,
+            )
+        };
+        assert_eq!(poll().await.status, StatusCode::NOT_FOUND);
+
+        // The sign-in page: security headers and a double-submit CSRF cookie.
+        let form = f.send("GET", &page, None, &[], "").await;
+        assert_eq!(form.status, StatusCode::OK);
+        assert!(
+            form.body.contains("Nextcloud desktop 3.13.0 (macOS)"),
+            "{}",
+            form.body
+        );
+        assert!(
+            form.header("content-security-policy")
+                .contains("frame-ancestors 'none'")
+        );
+        assert_eq!(form.header("x-frame-options"), "DENY");
+        assert_eq!(form.header("referrer-policy"), "no-referrer");
+        let csrf_cookie = set_cookie(&form, "gono_csrf").expect("csrf cookie");
+        let csrf = csrf_field(&form.body);
+        let login_body = |csrf: &str, password: &str| {
+            format!("action=login&csrf={csrf}&user=alice&password={password}")
+        };
+
+        let forged = f
+            .send(
+                "POST",
+                &page,
+                None,
+                &[FORM, ("Cookie", &csrf_cookie)],
+                &login_body("forged", "correct+horse"),
+            )
+            .await;
+        assert_eq!(forged.status, StatusCode::FORBIDDEN, "wrong CSRF token");
+        assert!(set_cookie(&forged, "gono_session").is_none());
+        let foreign = f
+            .send(
+                "POST",
+                &page,
+                None,
+                &[
+                    FORM,
+                    ("Cookie", &csrf_cookie),
+                    ("Origin", "https://evil.example"),
+                ],
+                &login_body(&csrf, "correct+horse"),
+            )
+            .await;
+        assert_eq!(foreign.status, StatusCode::FORBIDDEN, "foreign origin");
+        let wrong = f
+            .send(
+                "POST",
+                &page,
+                None,
+                &[FORM, ("Cookie", &csrf_cookie)],
+                &login_body(&csrf, "wrong"),
+            )
+            .await;
+        assert_eq!(wrong.status, StatusCode::FORBIDDEN);
+        assert!(
+            wrong.body.contains("Wrong username or password"),
+            "{}",
+            wrong.body
+        );
+        // An app password is not a web password.
+        let app = f
+            .send(
+                "POST",
+                &page,
+                None,
+                &[FORM, ("Cookie", &csrf_cookie)],
+                &login_body(&csrf, &f.full),
+            )
+            .await;
+        assert_eq!(app.status, StatusCode::FORBIDDEN);
+
+        let signed_in = f
+            .send(
+                "POST",
+                &page,
+                None,
+                &[FORM, ("Cookie", &csrf_cookie)],
+                &login_body(&csrf, "correct+horse"),
+            )
+            .await;
+        assert_eq!(
+            signed_in.status,
+            StatusCode::SEE_OTHER,
+            "{}",
+            signed_in.body
+        );
+        assert_eq!(signed_in.header("location"), page);
+        let session = set_cookie(&signed_in, "gono_session").expect("session cookie");
+        assert!(
+            signed_in
+                .headers
+                .get_all("set-cookie")
+                .iter()
+                .any(|v| v.to_str().unwrap().contains("HttpOnly")),
+        );
+        assert_eq!(poll().await.status, StatusCode::NOT_FOUND, "no consent yet");
+
+        let consent = f
+            .send("GET", &page, None, &[("Cookie", &session)], "")
+            .await;
+        assert!(consent.body.contains("Grant access"), "{}", consent.body);
+        assert!(consent.body.contains("Nextcloud desktop 3.13.0 (macOS)"));
+        let csrf = csrf_field(&consent.body);
+        let stolen = f
+            .send(
+                "POST",
+                &page,
+                None,
+                &[FORM, ("Cookie", &session)],
+                "action=grant&csrf=nope",
+            )
+            .await;
+        assert_eq!(stolen.status, StatusCode::FORBIDDEN);
+        assert_eq!(poll().await.status, StatusCode::NOT_FOUND);
+        let granted = f
+            .send(
+                "POST",
+                &page,
+                None,
+                &[FORM, ("Cookie", &session)],
+                &format!("action=grant&csrf={csrf}"),
+            )
+            .await;
+        assert_eq!(granted.status, StatusCode::SEE_OTHER);
+        let done = f
+            .send("GET", &page, None, &[("Cookie", &session)], "")
+            .await;
+        assert!(done.body.contains("Access granted"), "{}", done.body);
+        assert!(!done.body.contains("<form"), "nothing left to submit");
+
+        let completed = poll().await;
+        assert_eq!(completed.status, StatusCode::OK, "{}", completed.body);
+        let completed: serde_json::Value = serde_json::from_str(&completed.body).unwrap();
+        assert_eq!(completed["loginName"], "alice");
+        assert_eq!(completed["server"], "http://localhost:8080");
+        let minted = completed["appPassword"].as_str().unwrap().to_owned();
+        assert_ne!(minted, "correct horse");
+        assert_eq!(poll().await.status, StatusCode::NOT_FOUND, "single use");
+        assert_eq!(
+            f.send("PROPFIND", FILES, Some(&minted), &[("Depth", "0")], "")
+                .await
+                .status,
+            StatusCode::MULTI_STATUS
+        );
+        let labels: Vec<String> = app_passwords::list(&f.state.db, 1)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|p| p.label)
+            .collect();
+        assert!(
+            labels.contains(&"Nextcloud desktop 3.13.0 (macOS)".to_owned()),
+            "{labels:?}"
+        );
+        assert_eq!(
+            f.send("GET", &page, None, &[("Cookie", &session)], "")
+                .await
+                .status,
+            StatusCode::NOT_FOUND,
+            "the flow is gone"
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_web_sign_ins_share_the_device_rate_limit() {
+        let f = fixture().await;
+        let start = f.send("POST", "/login/v2", None, &[], "").await;
+        let start: serde_json::Value = serde_json::from_str(&start.body).unwrap();
+        assert!(
+            start["poll"]["endpoint"]
+                .as_str()
+                .unwrap()
+                .ends_with("/login/v2/poll")
+        );
+        let page = start["login"]
+            .as_str()
+            .unwrap()
+            .trim_start_matches("http://localhost:8080")
+            .to_owned();
+        let form = f.send("GET", &page, None, &[], "").await;
+        let cookie = set_cookie(&form, "gono_csrf").unwrap();
+        let body = format!(
+            "action=login&csrf={}&user=alice&password=wrong",
+            csrf_field(&form.body)
+        );
+        for _ in 0..crate::ratelimit::BURST {
+            let reply = f
+                .send("POST", &page, None, &[FORM, ("Cookie", &cookie)], &body)
+                .await;
+            assert_eq!(reply.status, StatusCode::FORBIDDEN);
+        }
+        let limited = f
+            .send("POST", &page, None, &[FORM, ("Cookie", &cookie)], &body)
+            .await;
+        assert_eq!(limited.status, StatusCode::TOO_MANY_REQUESTS);
+        assert!(limited.header("retry-after").parse::<u64>().unwrap() >= 1);
+        let dav = f.send("PROPFIND", FILES, Some(&f.full), &[], "").await;
+        assert_eq!(
+            dav.status,
+            StatusCode::TOO_MANY_REQUESTS,
+            "one limiter for both"
+        );
+    }
+
     const UPLOADS: &str = "/remote.php/dav/uploads/alice";
 
     #[tokio::test]
@@ -881,6 +1172,7 @@ mod tests {
         assert!(session_dir("expiring").join("1").exists());
 
         crate::janitor::Janitor {
+            db: f.state.db.clone(),
             uploads: f.state.uploads.clone(),
         }
         .run_once()

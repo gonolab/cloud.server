@@ -12,7 +12,7 @@ use gono_server_core::{
     users,
 };
 
-use super::load_config;
+use super::{load_config, refuse_root_on_foreign_install};
 use crate::{
     cli::InitArgs,
     logging::{self, Destination},
@@ -26,6 +26,7 @@ use crate::{
 /// is read from the terminal or stdin and is never printed or logged.
 pub async fn run(config_path: &Path, args: InitArgs) -> anyhow::Result<()> {
     let config = load_config(config_path)?;
+    refuse_root_on_foreign_install(&config)?;
     let _log_guard = logging::init(LogLevel::Warn, Destination::Stderr)?;
     let display_name = users::display_name_or_default(args.display_name.as_deref(), &args.admin)?;
 

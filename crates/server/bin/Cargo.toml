@@ -24,6 +24,7 @@ gono-server-dav.workspace = true
 gono-server-nextcloud.workspace = true
 ipnet.workspace = true
 rpassword.workspace = true
+rustix.workspace = true
 secrecy.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -20,7 +20,7 @@ use gono_server_nextcloud::{
 };
 use tokio::net::TcpListener;
 
-use super::load_config;
+use super::{load_config, refuse_root_on_foreign_install};
 use crate::{
     admin::{Admin, ServerInfo},
     app::{self, AppState},
@@ -35,6 +35,7 @@ use crate::{
 /// Runs the HTTP server until SIGTERM or Ctrl-C.
 pub async fn run(config_path: &Path) -> anyhow::Result<()> {
     let config = load_config(config_path)?;
+    refuse_root_on_foreign_install(&config)?;
     let destination = config
         .logging
         .file

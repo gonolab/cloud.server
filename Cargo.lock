@@ -795,6 +795,7 @@ dependencies = [
  "http-body-util",
  "ipnet",
  "rpassword",
+ "rustix",
  "secrecy",
  "serde",
  "serde_json",

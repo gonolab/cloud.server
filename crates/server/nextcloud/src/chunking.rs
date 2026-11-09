@@ -48,13 +48,13 @@ use std::{
 
 use bytes::Bytes;
 use dav_server::fs::FsError;
-use gono_core::{
+use gono_server_core::{
     db::{self, Pool},
     locks::LockStore,
     storage::{DataLayout, create_private_dir_all, upload_session_dir_name},
     uploads::{self, UploadSession},
 };
-use gono_dav::{
+use gono_server_dav::{
     Ctx, DavBody, Identity, OcInfo, RequestInfo, ScopedFs,
     fs::free_space,
     locks,
@@ -1023,7 +1023,7 @@ impl ChunkedUploads {
     /// Removes expired sessions with their chunks, and chunk directories that belong to no
     /// session (left behind by a crash or by deleted users). Called by a background task;
     /// returns the number of directories removed.
-    pub async fn purge(&self) -> gono_core::Result<usize> {
+    pub async fn purge(&self) -> gono_server_core::Result<usize> {
         let expired = uploads::purge_expired(self.pool(), db::unix_now()).await?;
         let mut removed = 0;
         for (owner, upload_id) in &expired {
@@ -1084,7 +1084,7 @@ impl ChunkedUploads {
             Ok(removed)
         })
         .await
-        .map_err(|source| gono_core::Error::Io {
+        .map_err(|source| gono_server_core::Error::Io {
             path: self.layout().uploads_root(),
             source,
         })?;

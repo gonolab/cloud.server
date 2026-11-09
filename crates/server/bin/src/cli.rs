@@ -3,7 +3,7 @@
 use std::{num::NonZeroU32, path::PathBuf, str::FromStr};
 
 use clap::{Args, Parser, Subcommand};
-use gono_core::{Permission, Username};
+use gono_server_core::{Permission, Username};
 
 /// Gono Cloud: a self-hosted WebDAV file server compatible with Nextcloud clients.
 #[derive(Debug, Parser)]

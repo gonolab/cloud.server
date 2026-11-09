@@ -7,7 +7,7 @@
 use std::io::{self, BufRead, IsTerminal};
 
 use anyhow::{Context, bail};
-use gono_core::{Username, password};
+use gono_server_core::{Username, password};
 use secrecy::{ExposeSecret, SecretString, zeroize::Zeroize};
 
 use crate::cli::PasswordSource;

@@ -21,8 +21,8 @@ use std::{
 
 use axum::http::{HeaderMap, HeaderValue, header};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use gono_core::{PRODUCT_NAME, app_passwords, db};
-use gono_dav::Identity;
+use gono_server_core::{PRODUCT_NAME, app_passwords, db};
+use gono_server_dav::Identity;
 use secrecy::SecretString;
 
 use crate::ratelimit::RateLimiter;
@@ -155,7 +155,7 @@ pub fn basic_challenge() -> HeaderValue {
 
 #[cfg(test)]
 mod tests {
-    use gono_core::{
+    use gono_server_core::{
         Username,
         config::DbConfig,
         db::OpenMode,

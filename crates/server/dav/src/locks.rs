@@ -24,7 +24,7 @@ use dav_server::{
     ls::{DavLock, DavLockSystem, LsFuture},
 };
 use futures_util::FutureExt as _;
-use gono_core::{
+use gono_server_core::{
     RelPath, db,
     locks::{Lock, LockStore},
 };
@@ -206,7 +206,7 @@ pub async fn write_conflict(
     storage: &RelPath,
     principal: &str,
     tokens: &[String],
-) -> gono_core::Result<Option<Lock>> {
+) -> gono_server_core::Result<Option<Lock>> {
     let covering = store.covering(owner, storage, db::unix_now()).await?;
     Ok(conflict_among(covering, |lock| {
         tokens.contains(&lock.token) && lock.principal.as_deref() == Some(principal)
@@ -263,7 +263,7 @@ fn serialize(owner: &Element) -> Option<Vec<u8>> {
     Some(xml)
 }
 
-fn log_error(err: &gono_core::Error) {
+fn log_error(err: &gono_server_core::Error) {
     tracing::error!(error = %err, "lock database query failed");
 }
 

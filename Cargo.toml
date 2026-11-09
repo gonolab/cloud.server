@@ -27,9 +27,9 @@ publish = false
 
 [workspace.dependencies]
 # Internal crates.
-gono-core = { path = "crates/server/core" }
-gono-dav = { path = "crates/server/dav" }
-gono-nextcloud = { path = "crates/server/nextcloud" }
+gono-server-core = { path = "crates/server/core" }
+gono-server-dav = { path = "crates/server/dav" }
+gono-server-nextcloud = { path = "crates/server/nextcloud" }
 
 # Pinned exactly: the WebDAV layer is built against this version's trait surface
 # (`GuardedFileSystem`, `DavMetaData`, `DavLockSystem`). Upgrade deliberately.

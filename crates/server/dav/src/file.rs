@@ -11,7 +11,7 @@ use std::{
 use bytes::{Buf, Bytes, BytesMut};
 use dav_server::fs::{DavFile, DavMetaData, FsError, FsFuture, FsResult};
 use futures_util::FutureExt as _;
-use gono_core::RelPath;
+use gono_server_core::RelPath;
 use tokio::io::{AsyncReadExt as _, AsyncSeekExt as _, AsyncWriteExt as _};
 
 use crate::{
@@ -170,9 +170,9 @@ fn install(
     storage: &RelPath,
     temp: &Path,
     target: &Path,
-) -> std::io::Result<gono_core::meta::DiskStat> {
+) -> std::io::Result<gono_server_core::meta::DiskStat> {
     let parent = storage.parent().unwrap_or_default();
-    match gono_core::storage::lstat_beneath(root, &parent)? {
+    match gono_server_core::storage::lstat_beneath(root, &parent)? {
         Some(meta) if meta.is_dir() => {}
         _ => return Err(std::io::ErrorKind::NotFound.into()),
     }

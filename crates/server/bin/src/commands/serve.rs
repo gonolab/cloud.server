@@ -4,7 +4,7 @@ use std::{path::Path, sync::Arc, time::Duration};
 
 use anyhow::Context;
 use dav_server::{DavHandler, DavMethodSet};
-use gono_core::{
+use gono_server_core::{
     Config,
     db::{self, OpenMode},
     locks::LockStore,
@@ -13,8 +13,8 @@ use gono_core::{
     storage::DataLayout,
     users,
 };
-use gono_dav::{DavService, ScopedFs, locks::SqliteLs};
-use gono_nextcloud::{
+use gono_server_dav::{DavService, ScopedFs, locks::SqliteLs};
+use gono_server_nextcloud::{
     chunking::ChunkedUploads,
     notify_push::{self, Hub, PushSettings},
 };

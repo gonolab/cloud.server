@@ -1,7 +1,7 @@
 //! MetaStore against a real SQLite database: file ids, ETag and size propagation, dead
 //! properties, and subtree operations on names that `LIKE` would get wrong.
 
-use gono_core::{
+use gono_server_core::{
     RelPath, Username,
     config::DbConfig,
     db::{self, OpenMode, Pool},
@@ -521,7 +521,7 @@ async fn adoption_creates_rows_without_signalling_a_change() {
     assert_eq!(rows.len(), 2);
     assert_eq!(
         rows[0].etag,
-        gono_core::meta::derived_file_etag(rows[0].id, 1_000, 4)
+        gono_server_core::meta::derived_file_etag(rows[0].id, 1_000, 4)
     );
     assert_eq!(f.etag("").await, root_etag);
     let again = f
@@ -580,7 +580,7 @@ async fn favorites_are_listed_by_subtree() {
         let id = f.store.get(f.owner, &p(path)).await.unwrap().unwrap().id;
         f.store.set_favorite(id, true).await.unwrap();
     }
-    let paths = |rows: Vec<gono_core::meta::FileRow>| -> Vec<String> {
+    let paths = |rows: Vec<gono_server_core::meta::FileRow>| -> Vec<String> {
         rows.into_iter()
             .map(|row| row.rel_path.as_str().to_owned())
             .collect()
@@ -604,7 +604,8 @@ async fn favorites_are_listed_by_subtree() {
         .unwrap()
         .unwrap();
     f.store.set_favorite(root.id, true).await.unwrap();
-    let root_only = |rows: Vec<gono_core::meta::FileRow>| rows.iter().any(|r| r.rel_path.is_root());
+    let root_only =
+        |rows: Vec<gono_server_core::meta::FileRow>| rows.iter().any(|r| r.rel_path.is_root());
     assert!(!root_only(
         f.store
             .favorites(f.owner, &RelPath::root(), false)
@@ -621,17 +622,17 @@ async fn favorites_are_listed_by_subtree() {
 
 /// Records the published events.
 #[derive(Debug, Default)]
-struct Recorder(std::sync::Mutex<Vec<gono_core::meta::ChangeEvent>>);
+struct Recorder(std::sync::Mutex<Vec<gono_server_core::meta::ChangeEvent>>);
 
-impl gono_core::meta::ChangeSink for Recorder {
-    fn publish(&self, event: &gono_core::meta::ChangeEvent) {
+impl gono_server_core::meta::ChangeSink for Recorder {
+    fn publish(&self, event: &gono_server_core::meta::ChangeEvent) {
         self.0.lock().unwrap().push(event.clone());
     }
 }
 
 #[tokio::test]
 async fn every_logged_change_is_published_after_the_commit() {
-    use gono_core::meta::ChangeOperation;
+    use gono_server_core::meta::ChangeOperation;
 
     let fixture = fixture().await;
     let recorder = std::sync::Arc::new(Recorder::default());
@@ -714,7 +715,7 @@ fn entries(list: &[(&str, Option<u64>)]) -> Vec<(RelPath, DiskStat)> {
 
 #[tokio::test]
 async fn reconcile_adds_removes_and_updates_what_changed_on_disk() {
-    use gono_core::meta::ChangeOperation;
+    use gono_server_core::meta::ChangeOperation;
 
     let fixture = fixture().await;
     let recorder = std::sync::Arc::new(Recorder::default());
@@ -789,7 +790,7 @@ async fn reconcile_adds_removes_and_updates_what_changed_on_disk() {
     assert_eq!(file.id, changed.id, "the file id is kept");
     assert_eq!(
         file.etag,
-        gono_core::meta::derived_file_etag(file.id, 1_000, 25)
+        gono_server_core::meta::derived_file_etag(file.id, 1_000, 25)
     );
     let unchanged = store
         .get(owner, &p("docs/kept.txt"))

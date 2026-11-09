@@ -5,7 +5,7 @@
 use std::path::Path;
 
 use anyhow::bail;
-use gono_core::{
+use gono_server_core::{
     RelPath,
     app_passwords::{self, Scope},
     db, users,
@@ -99,7 +99,7 @@ pub async fn run(config_path: &Path, command: AppPasswordCommand) -> anyhow::Res
 
 fn to_scope(arg: &ScopeArg) -> anyhow::Result<Scope> {
     let parse = |value: &str| {
-        RelPath::parse(value).map_err(|source| gono_core::Error::InvalidPath {
+        RelPath::parse(value).map_err(|source| gono_server_core::Error::InvalidPath {
             path: value.to_owned(),
             source,
         })

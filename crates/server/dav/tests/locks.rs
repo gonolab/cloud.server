@@ -5,8 +5,8 @@ mod common;
 use std::time::Duration;
 
 use common::{Harness, mount};
-use gono_core::locks::LockStore;
-use gono_dav::locks::SqliteLs;
+use gono_server_core::locks::LockStore;
+use gono_server_dav::locks::SqliteLs;
 
 const LOCKINFO: &str = r#"<?xml version="1.0" encoding="utf-8"?>
 <d:lockinfo xmlns:d="DAV:">
@@ -16,7 +16,7 @@ const LOCKINFO: &str = r#"<?xml version="1.0" encoding="utf-8"?>
 </d:lockinfo>"#;
 
 /// A handler with a fresh lock system over the harness's database and file system.
-fn handler(h: &Harness, max_timeout: u64) -> dav_server::DavHandler<gono_dav::Ctx> {
+fn handler(h: &Harness, max_timeout: u64) -> dav_server::DavHandler<gono_server_dav::Ctx> {
     dav_server::DavHandler::builder()
         .filesystem(Box::new(h.fs.clone()))
         .locksystem(SqliteLs::new(

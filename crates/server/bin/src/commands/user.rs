@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use anyhow::Context;
-use gono_core::{
+use gono_server_core::{
     db, password,
     storage::DataLayout,
     users::{self, NewUser},
@@ -30,7 +30,7 @@ pub async fn run(config_path: &Path, command: UserCommand) -> anyhow::Result<()>
             let display_name = users::display_name_or_default(display_name.as_deref(), &username)?;
             if users::find(&pool, &username).await?.is_some() {
                 // Checked again by the insert; this only avoids prompting for nothing.
-                return Err(gono_core::Error::UserExists(username).into());
+                return Err(gono_server_core::Error::UserExists(username).into());
             }
             let hash = read_password_hash(password, &username).await?;
             let id = users::create(
@@ -129,7 +129,7 @@ pub async fn run(config_path: &Path, command: UserCommand) -> anyhow::Result<()>
 /// Reads a new web login password (prompt or stdin) and hashes it off the async runtime.
 async fn read_password_hash(
     source: crate::cli::PasswordSource,
-    username: &gono_core::Username,
+    username: &gono_server_core::Username,
 ) -> anyhow::Result<String> {
     let username = username.clone();
     let password =

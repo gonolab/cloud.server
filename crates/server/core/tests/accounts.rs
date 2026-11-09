@@ -1,6 +1,6 @@
 //! Account and app password storage against a real SQLite database.
 
-use gono_core::{
+use gono_server_core::{
     Error, Permission, RelPath, Username,
     app_passwords::{self, Scope},
     config::DbConfig,
@@ -246,7 +246,7 @@ async fn concurrent_admin_removals_leave_one_admin() {
         }
     }
     assert_eq!(refused, 1);
-    let overview = gono_core::stats::overview(&pool, db::unix_now())
+    let overview = gono_server_core::stats::overview(&pool, db::unix_now())
         .await
         .unwrap();
     assert_eq!(overview.admins, 1);
@@ -264,7 +264,7 @@ async fn overview_counts() {
     users::set_enabled(&pool, &Username::new("alice").unwrap(), false)
         .await
         .unwrap();
-    let overview = gono_core::stats::overview(&pool, db::unix_now())
+    let overview = gono_server_core::stats::overview(&pool, db::unix_now())
         .await
         .unwrap();
     assert_eq!(
@@ -273,6 +273,6 @@ async fn overview_counts() {
     );
     assert_eq!(overview.app_passwords, 1);
     assert_eq!(overview.storage_used, 0);
-    let per_user = gono_core::stats::per_user(&pool).await.unwrap();
+    let per_user = gono_server_core::stats::per_user(&pool).await.unwrap();
     assert_eq!(per_user[&alice].app_passwords, 1);
 }

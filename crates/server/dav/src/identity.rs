@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use gono_core::{Permission, RelPath, Username, app_passwords::Device};
+use gono_server_core::{Permission, RelPath, Username, app_passwords::Device};
 
 /// One mount of the client's tree: `mount_path` (client side) shows `storage_path` (inside the
 /// owner's storage) with read-only or read-write access.

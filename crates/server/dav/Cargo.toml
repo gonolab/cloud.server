@@ -1,5 +1,5 @@
 [package]
-name = "gono-dav"
+name = "gono-server-dav"
 description = "WebDAV file system, metadata and locking for Gono Cloud, built on dav-server."
 version.workspace = true
 edition.workspace = true
@@ -12,7 +12,7 @@ publish.workspace = true
 bytes.workspace = true
 dav-server.workspace = true
 futures-util.workspace = true
-gono-core.workspace = true
+gono-server-core.workspace = true
 http.workspace = true
 http-body.workspace = true
 http-body-util.workspace = true

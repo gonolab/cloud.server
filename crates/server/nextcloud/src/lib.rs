@@ -12,7 +12,7 @@
 //!   change events, scope filtering, debouncing and the protocol frames.
 //!
 //! The HTTP routing and authentication live in the server crate; the services here take an
-//! authenticated identity and `http` requests, like `gono_dav::DavService`.
+//! authenticated identity and `http` requests, like `gono_server_dav::DavService`.
 
 pub mod chunking;
 pub mod login_flow;

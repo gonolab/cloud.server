@@ -49,14 +49,14 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
-use gono_core::{
+use gono_server_core::{
     Error as CoreError, Permission, RelPath, Username,
     app_passwords::{self, Scope},
     db, password, stats,
     users::{self, NewUser, User},
     web_sessions::{self, SessionUser},
 };
-use gono_nextcloud::{
+use gono_server_nextcloud::{
     notify_push::{Endpoints, PushSettings},
     status,
 };
@@ -514,7 +514,7 @@ async fn overview(State(state): State<AppState>, headers: HeaderMap) -> Response
     let data_dir = info.data_dir.clone();
     let db_path = info.db_path.clone();
     let (disk, db_bytes) = tokio::task::spawn_blocking(move || {
-        let disk = gono_dav::fs::disk_space(&data_dir);
+        let disk = gono_server_dav::fs::disk_space(&data_dir);
         let file_size = |path: PathBuf| std::fs::metadata(path).map_or(0, |meta| meta.len());
         let mut wal = db_path.clone().into_os_string();
         wal.push("-wal");
@@ -608,7 +608,7 @@ async fn overview(State(state): State<AppState>, headers: HeaderMap) -> Response
         name: "Chunked upload v2",
         detail: format!(
             "Unfinished uploads expire after {} h",
-            gono_core::uploads::SESSION_TTL_SECS / 3600
+            gono_server_core::uploads::SESSION_TTL_SECS / 3600
         ),
         on: true,
     });

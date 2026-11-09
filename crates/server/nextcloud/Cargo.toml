@@ -1,5 +1,5 @@
 [package]
-name = "gono-nextcloud"
+name = "gono-server-nextcloud"
 description = "Nextcloud protocol surface (status, OCS, Login Flow v2, chunking, notify_push) for Gono Cloud."
 version.workspace = true
 edition.workspace = true
@@ -11,8 +11,8 @@ publish.workspace = true
 [dependencies]
 bytes.workspace = true
 dav-server.workspace = true
-gono-core.workspace = true
-gono-dav.workspace = true
+gono-server-core.workspace = true
+gono-server-dav.workspace = true
 http.workspace = true
 http-body.workspace = true
 http-body-util.workspace = true

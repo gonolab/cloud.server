@@ -1,4 +1,4 @@
-//! Login Flow v2 endpoints and pages (see [`gono_nextcloud::login_flow`] for the protocol).
+//! Login Flow v2 endpoints and pages (see [`gono_server_nextcloud::login_flow`] for the protocol).
 //!
 //! | Request | Answer |
 //! |---|---|
@@ -22,8 +22,8 @@ use axum::{
     http::{HeaderMap, HeaderValue, StatusCode, Uri, header},
     response::{IntoResponse, Response},
 };
-use gono_core::{db, login_flows};
-use gono_nextcloud::login_flow;
+use gono_server_core::{db, login_flows};
+use gono_server_nextcloud::login_flow;
 use secrecy::{ExposeSecret as _, SecretString};
 use serde::Deserialize;
 
@@ -217,7 +217,7 @@ fn login_page(
 fn consent_page(
     state: &AppState,
     client: &str,
-    session: &(gono_core::web_sessions::SessionUser, String),
+    session: &(gono_server_core::web_sessions::SessionUser, String),
 ) -> Response {
     let (user, token) = session;
     let account = if user.display_name == user.username.as_str() {

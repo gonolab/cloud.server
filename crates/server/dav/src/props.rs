@@ -101,7 +101,7 @@ pub fn parse_favorite(prop: &DavProp) -> Option<bool> {
 mod tests {
     use std::time::UNIX_EPOCH;
 
-    use gono_core::RelPath;
+    use gono_server_core::RelPath;
 
     use super::*;
     use crate::resolve::Location;

@@ -8,7 +8,7 @@
 //!   verified, one token per failure. Unknown accounts cost the same Argon2 work as known
 //!   ones, so response times do not reveal which accounts exist.
 //! - **Sessions**: a successful sign-in creates a `web_sessions` row
-//!   ([`gono_core::web_sessions`]) and sets the [`SESSION_COOKIE`] (`HttpOnly`,
+//!   ([`gono_server_core::web_sessions`]) and sets the [`SESSION_COOKIE`] (`HttpOnly`,
 //!   `SameSite=Lax`, `Secure` when the public origin is HTTPS). App passwords never create a
 //!   session.
 //! - **CSRF**: every form carries a token. Before sign-in it is a double-submit token: a random
@@ -33,7 +33,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use gono_core::{
+use gono_server_core::{
     Username, db, password, secret,
     users::{self, User},
     web_sessions::{self, SessionUser},

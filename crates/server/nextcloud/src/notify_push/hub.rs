@@ -39,12 +39,12 @@ use std::{
     time::{Duration, Instant},
 };
 
-use gono_core::{
+use gono_server_core::{
     config::NotifyPushConfig,
     meta::{ChangeEvent, ChangeSink, MetaStore},
     secret,
 };
-use gono_dav::Identity;
+use gono_server_dav::Identity;
 use secrecy::{ExposeSecret as _, SecretString};
 use tokio::sync::{broadcast, watch};
 
@@ -408,8 +408,8 @@ pub async fn run_feed(hub: Arc<Hub>, meta: MetaStore) {
 
 #[cfg(test)]
 mod tests {
-    use gono_core::{RelPath, Username, meta::ChangeOperation};
-    use gono_dav::Mount;
+    use gono_server_core::{RelPath, Username, meta::ChangeOperation};
+    use gono_server_dav::Mount;
 
     use super::*;
 

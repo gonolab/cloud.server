@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use gono_core::{
+use gono_server_core::{
     Error, Username,
     config::DbConfig,
     db::{self, MIGRATOR, OpenMode, Pool},
@@ -344,7 +344,9 @@ async fn rel_path_ranges_select_exactly_the_subtree() {
 async fn instance_id_is_generated_once() {
     let dir = tempfile::tempdir().unwrap();
     let pool = fresh_database(dir.path()).await;
-    let id = gono_core::settings::instance_id(&pool).await.unwrap();
+    let id = gono_server_core::settings::instance_id(&pool)
+        .await
+        .unwrap();
     assert_eq!(id.len(), 12, "{id}");
     assert!(id.starts_with("oc"), "{id}");
     assert!(
@@ -352,7 +354,12 @@ async fn instance_id_is_generated_once() {
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
     );
     db::migrate(&pool).await.unwrap();
-    assert_eq!(gono_core::settings::instance_id(&pool).await.unwrap(), id);
+    assert_eq!(
+        gono_server_core::settings::instance_id(&pool)
+            .await
+            .unwrap(),
+        id
+    );
 }
 
 #[tokio::test]

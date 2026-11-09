@@ -1,14 +1,14 @@
 //! Login Flow v2: the protocol documents.
 //!
 //! 1. `POST /index.php/login/v2` (or `/login/v2`) starts a flow
-//!    ([`gono_core::login_flows::create`]) and answers [`init_document`]: a login URL for the
-//!    browser and a token to poll with.
+//!    ([`gono_server_core::login_flows::create`]) and answers [`init_document`]: a login URL for
+//!    the browser and a token to poll with.
 //! 2. The user opens the login URL, signs in with their web login password and approves the
 //!    device on an explicit consent page that names the client ([`client_name`]). The pages
 //!    are part of the server's web UI.
 //! 3. `POST .../login/v2/poll` with `token=<poll token>` answers `404` until then, and once
 //!    [`poll_document`] with a newly minted app password for this device
-//!    ([`gono_core::login_flows::complete`]). Every device gets its own app password; the
+//!    ([`gono_server_core::login_flows::complete`]). Every device gets its own app password; the
 //!    plaintext is never stored.
 
 use serde_json::{Value, json};

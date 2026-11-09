@@ -17,7 +17,7 @@
 //! - [`report`]: the `oc:filter-files` favorites REPORT, served next to dav-server.
 //! - [`oc_headers`]: the tower layer adding `OC-ETag`, `OC-FileId` and `X-NC-Permissions`.
 //!
-//! All metadata writes go through the `MetaStore` (see [`gono_core::meta`]).
+//! All metadata writes go through the `MetaStore` (see [`gono_server_core::meta`]).
 
 pub mod ctx;
 mod file;

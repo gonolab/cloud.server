@@ -1,7 +1,7 @@
 //! Short-lived protocol state against a real SQLite database: chunked upload sessions, Login
 //! Flow v2 sign-ins and browser sessions.
 
-use gono_core::{
+use gono_server_core::{
     RelPath, Username, app_passwords,
     config::DbConfig,
     db::{self, OpenMode, Pool},

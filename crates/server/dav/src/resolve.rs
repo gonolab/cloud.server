@@ -8,7 +8,7 @@
 //! - `/remote.php/webdav` (the legacy alias, always the authenticated user).
 //!
 //! The rest is the *client path*: validated and NFC-normalized like every storage path (see
-//! [`gono_core::path`]). The identity's mounts then decide what it is:
+//! [`gono_server_core::path`]). The identity's mounts then decide what it is:
 //!
 //! - inside a mount: a storage path below the mount's `storage_path`;
 //! - a strict ancestor of one or more mount paths: a read-only *virtual* collection that only
@@ -19,7 +19,7 @@
 //! All of this is lexical; nothing here touches the disk.
 
 use dav_server::{davpath::DavPath, fs::FsError};
-use gono_core::{RelPath, path::PathError};
+use gono_server_core::{RelPath, path::PathError};
 
 use crate::identity::{Identity, Mount};
 
@@ -215,7 +215,7 @@ fn encode_segment(segment: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use gono_core::Username;
+    use gono_server_core::Username;
 
     use super::*;
 

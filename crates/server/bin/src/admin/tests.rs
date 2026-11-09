@@ -8,7 +8,7 @@ use axum::{
     extract::ConnectInfo,
     http::{HeaderMap, Request, StatusCode},
 };
-use gono_core::{
+use gono_server_core::{
     RelPath, Username,
     app_passwords::{self, Scope},
     config::DbConfig,
@@ -19,7 +19,7 @@ use gono_core::{
     users::{self, NewUser},
     web_sessions,
 };
-use gono_nextcloud::chunking::ChunkedUploads;
+use gono_server_nextcloud::chunking::ChunkedUploads;
 use http_body_util::BodyExt as _;
 use secrecy::{ExposeSecret as _, SecretString};
 use tower::ServiceExt as _;
@@ -92,7 +92,7 @@ async fn fixture() -> Fixture {
     .unwrap();
     let uploads = ChunkedUploads::new(
         dav.fs().clone(),
-        gono_core::locks::LockStore::new(pool.clone()),
+        gono_server_core::locks::LockStore::new(pool.clone()),
     );
     let limiter = Arc::new(RateLimiter::new());
     let base_url = Url::parse("https://cloud.example.com").unwrap();
@@ -682,12 +682,12 @@ async fn app_passwords_are_created_shown_once_and_revoked() {
             Scope {
                 mount_path: RelPath::parse("Archive").unwrap(),
                 storage_path: RelPath::parse("Scans/Archive").unwrap(),
-                permission: gono_core::Permission::View,
+                permission: gono_server_core::Permission::View,
             },
             Scope {
                 mount_path: RelPath::parse("Inbox").unwrap(),
                 storage_path: RelPath::parse("Scans/Inbox").unwrap(),
-                permission: gono_core::Permission::Full,
+                permission: gono_server_core::Permission::Full,
             },
         ]
     );

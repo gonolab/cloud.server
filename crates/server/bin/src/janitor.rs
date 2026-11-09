@@ -12,8 +12,8 @@
 
 use std::time::Duration;
 
-use gono_core::{db, login_flows, web_sessions};
-use gono_nextcloud::chunking::ChunkedUploads;
+use gono_server_core::{db, login_flows, web_sessions};
+use gono_server_nextcloud::chunking::ChunkedUploads;
 use tokio::task::JoinHandle;
 
 /// Time between two cleanup passes.

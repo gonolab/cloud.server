@@ -6,10 +6,10 @@
 //! - Login Flow v2 under `/index.php/login/v2` and `/login/v2`: see [`crate::login_flow`].
 //! - `/remote.php/dav/files/<user>/...` and the legacy alias `/remote.php/webdav/...`: WebDAV,
 //!   served by the single `DavHandler` inside [`DavService`], except `REPORT`, which goes to
-//!   [`gono_dav::report`] (the `filter-files` favorites report). Requests are authenticated
+//!   [`gono_server_dav::report`] (the `filter-files` favorites report). Requests are authenticated
 //!   with an app password; `<user>` must be the authenticated user.
 //! - `/remote.php/dav/uploads/<user>/...`: Nextcloud chunked upload v2
-//!   ([`gono_nextcloud::chunking`]). Other users' namespaces and app passwords without any
+//!   ([`gono_server_nextcloud::chunking`]). Other users' namespaces and app passwords without any
 //!   writable mount are refused with 403 before the protocol is looked at.
 //! - notify_push, when `notify_push.enabled`: the WebSocket at `/push/ws` and the pre-auth
 //!   endpoint `/index.php/apps/notify_push/pre_auth`: see [`crate::notify_push`].
@@ -30,9 +30,9 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{any, get, post},
 };
-use gono_core::db;
-use gono_dav::{DavService, Identity, OcHeadersLayer, report, resolve::FILES_ROOT};
-use gono_nextcloud::{
+use gono_server_core::db;
+use gono_server_dav::{DavService, Identity, OcHeadersLayer, report, resolve::FILES_ROOT};
+use gono_server_nextcloud::{
     chunking::{ChunkedUploads, UPLOADS_ROOT},
     notify_push::{Hub, PRE_AUTH_PATH, WEBSOCKET_PATH},
 };
@@ -238,7 +238,7 @@ async fn webdav(
 }
 
 /// Hands an authenticated WebDAV request to dav-server, except `REPORT`, which dav-server does
-/// not implement (see [`gono_dav::report`]).
+/// not implement (see [`gono_server_dav::report`]).
 async fn serve_dav(state: &AppState, identity: Arc<Identity>, request: Request) -> Response {
     if request.method().as_str() == "REPORT" {
         return report::handle(&state.dav, identity, request)
@@ -273,7 +273,7 @@ mod tests {
 
     use axum::http::Request;
     use base64::{Engine as _, engine::general_purpose::STANDARD};
-    use gono_core::{
+    use gono_server_core::{
         Permission, RelPath, Username,
         app_passwords::{self, Scope},
         config::DbConfig,
@@ -339,13 +339,13 @@ mod tests {
         let dav = crate::commands::serve::dav_service(
             Duration::from_secs(600),
             layout,
-            gono_core::meta::MetaStore::new(pool.clone()),
+            gono_server_core::meta::MetaStore::new(pool.clone()),
         )
         .await
         .unwrap();
         let uploads = ChunkedUploads::new(
             dav.fs().clone(),
-            gono_core::locks::LockStore::new(pool.clone()),
+            gono_server_core::locks::LockStore::new(pool.clone()),
         );
         let limiter = Arc::new(RateLimiter::new());
         let base_url = Url::parse("http://localhost:8080").unwrap();
@@ -670,7 +670,7 @@ mod tests {
         let status = f.send("GET", "/status.php", None, &[], "").await;
         assert_eq!(status.status, StatusCode::OK);
         let status: serde_json::Value = serde_json::from_str(&status.body).unwrap();
-        assert_eq!(status["productname"], gono_core::PRODUCT_NAME);
+        assert_eq!(status["productname"], gono_server_core::PRODUCT_NAME);
         assert_eq!(status["installed"], true);
         assert_eq!(
             f.send("GET", "/index.php/204", None, &[], "").await.status,
@@ -779,9 +779,10 @@ mod tests {
     #[tokio::test]
     async fn login_flow_needs_the_web_password_and_explicit_consent() {
         let f = fixture().await;
-        let hash =
-            gono_core::password::hash(&secrecy::SecretString::from("correct horse".to_owned()))
-                .unwrap();
+        let hash = gono_server_core::password::hash(&secrecy::SecretString::from(
+            "correct horse".to_owned(),
+        ))
+        .unwrap();
         users::set_password_hash(&f.state.db, &Username::new("alice").unwrap(), &hash)
             .await
             .unwrap();
@@ -1195,7 +1196,8 @@ mod tests {
             .unwrap()
             .set_modified(two_hours_ago)
             .unwrap();
-        let session_dir = |id: &str| uploads.join(gono_core::storage::upload_session_dir_name(id));
+        let session_dir =
+            |id: &str| uploads.join(gono_server_core::storage::upload_session_dir_name(id));
         assert!(session_dir("expiring").join("1").exists());
 
         crate::janitor::Janitor {

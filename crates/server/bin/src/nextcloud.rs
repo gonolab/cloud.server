@@ -1,6 +1,6 @@
 //! HTTP endpoints of the Nextcloud protocol surface besides WebDAV: `status.php`, the
 //! connectivity probe and the OCS API. The documents themselves come from
-//! [`gono_nextcloud`]; this module routes, authenticates and renders them.
+//! [`gono_server_nextcloud`]; this module routes, authenticates and renders them.
 //!
 //! OCS endpoints (each under `/ocs/v1.php/`, `/ocs/v2.php/` and their `/index.php/` aliases):
 //!
@@ -22,9 +22,9 @@ use axum::{
     http::{HeaderValue, Method, StatusCode, header},
     response::{IntoResponse, Response},
 };
-use gono_core::{PRODUCT_NAME, app_passwords};
-use gono_dav::Identity;
-use gono_nextcloud::{
+use gono_server_core::{PRODUCT_NAME, app_passwords};
+use gono_server_dav::Identity;
+use gono_server_nextcloud::{
     notify_push,
     ocs::{self, ApiVersion, Format, Outcome, Reply},
     status,
@@ -195,7 +195,7 @@ async fn user_reply(
     reply(version, format, &Outcome::Ok, data)
 }
 
-fn internal_error(err: &gono_core::Error) -> Response {
+fn internal_error(err: &gono_server_core::Error) -> Response {
     tracing::error!(error = %err, "OCS request failed");
     (StatusCode::INTERNAL_SERVER_ERROR, Body::empty()).into_response()
 }

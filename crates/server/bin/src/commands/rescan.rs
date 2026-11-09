@@ -8,7 +8,7 @@
 use std::{fmt::Display, path::Path};
 
 use anyhow::{Context, bail};
-use gono_core::{
+use gono_server_core::{
     RelPath,
     meta::{MetaStore, Reconciled},
     rescan::{self, Walk},
@@ -32,7 +32,7 @@ pub async fn run(config_path: &Path, args: RescanArgs) -> anyhow::Result<()> {
 
 async fn rescan_all(
     data_dir: &Path,
-    pool: &gono_core::db::Pool,
+    pool: &gono_server_core::db::Pool,
     args: RescanArgs,
 ) -> anyhow::Result<()> {
     let layout = DataLayout::new(data_dir);

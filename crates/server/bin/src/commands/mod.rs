@@ -11,7 +11,7 @@ pub mod user;
 use std::path::Path;
 
 use anyhow::{Context, bail};
-use gono_core::{
+use gono_server_core::{
     Config,
     config::LogLevel,
     db::{self, OpenMode, Pool},

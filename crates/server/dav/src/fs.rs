@@ -5,7 +5,7 @@
 //!   identity's mounts.
 //! - **Safe disk access**: every lookup walks the path with `lstat(2)` and treats symbolic
 //!   links (and sockets, FIFOs, devices) as missing, so no request can leave the user's tree;
-//!   names that are not NFC are hidden (they cannot be addressed, see [`gono_core::path`]).
+//!   names that are not NFC are hidden (they cannot be addressed, see [`gono_server_core::path`]).
 //! - **Permissions**: every write checks the mount's permission. Virtual collections and mount
 //!   roots can be neither written nor deleted nor renamed.
 //! - **Metadata**: entries are reported as [`Entry`]s through [`DavMeta`] (one quoted ETag on
@@ -39,7 +39,7 @@ use dav_server::{
     },
 };
 use futures_util::{FutureExt as _, StreamExt as _, stream};
-use gono_core::{
+use gono_server_core::{
     RelPath,
     meta::{DeadProp, DiskStat, FileRow, MetaStore, PropChange, derived_file_etag},
     path::disk_segment,
@@ -110,7 +110,7 @@ pub(crate) fn io_error(err: io::Error) -> FsError {
     }
 }
 
-fn db_error(err: gono_core::Error) -> FsError {
+fn db_error(err: gono_server_core::Error) -> FsError {
     tracing::error!(error = %err, "metadata update failed");
     FsError::GeneralFailure
 }

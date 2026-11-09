@@ -6,7 +6,7 @@ use std::{
 };
 
 use dav_server::davpath::DavPath;
-use gono_core::RelPath;
+use gono_server_core::RelPath;
 use http::Method;
 
 use crate::{identity::Identity, metadata::Entry};

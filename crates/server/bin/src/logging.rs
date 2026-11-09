@@ -14,7 +14,7 @@ use std::{
 };
 
 use anyhow::Context;
-use gono_core::config::LogLevel;
+use gono_server_core::config::LogLevel;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::EnvFilter;
 
@@ -22,7 +22,12 @@ use tracing_subscriber::EnvFilter;
 pub const LOG_ENV: &str = "GONO_CLOUD_LOG";
 
 /// Crates whose events `logging.level` applies to.
-const OWN_CRATES: &[&str] = &["gono_cloud", "gono_core", "gono_dav", "gono_nextcloud"];
+const OWN_CRATES: &[&str] = &[
+    "gono_cloud",
+    "gono_server_core",
+    "gono_server_dav",
+    "gono_server_nextcloud",
+];
 
 /// Where log lines go.
 #[derive(Debug, Clone)]

@@ -1,5 +1,5 @@
 [package]
-name = "gono-core"
+name = "gono-server-core"
 description = "Domain types, configuration, database access and errors for Gono Cloud."
 version.workspace = true
 edition.workspace = true

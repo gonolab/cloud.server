@@ -1,4 +1,4 @@
-//! notify_push endpoints (see [`gono_nextcloud::notify_push`] for the protocol and the hub).
+//! notify_push endpoints (see [`gono_server_nextcloud::notify_push`] for the protocol and the hub).
 //!
 //! | Request | Answer |
 //! |---|---|
@@ -8,7 +8,7 @@
 //! A connection goes through these stages:
 //!
 //! 1. **Handshake.** At most
-//!    [`MAX_HANDSHAKES`](gono_nextcloud::notify_push::MAX_HANDSHAKES) connections may wait for credentials at once;
+//!    [`MAX_HANDSHAKES`](gono_server_nextcloud::notify_push::MAX_HANDSHAKES) connections may wait for credentials at once;
 //!    each has `notify_push.auth_timeout_secs` to send them. Frames are limited to
 //!    [`MAX_FRAME_BYTES`], so nobody can make the server buffer large messages.
 //! 2. **Authentication.** Username and app password go through the shared
@@ -38,9 +38,9 @@ use axum::{
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
 };
-use gono_core::{app_passwords, db};
-use gono_dav::Identity;
-use gono_nextcloud::notify_push::{
+use gono_server_core::{app_passwords, db};
+use gono_server_dav::Identity;
+use gono_server_nextcloud::notify_push::{
     Handshake, Hub, Outbox, SubscribeError, Subscription,
     message::{self, AUTHENTICATED},
 };
@@ -371,7 +371,7 @@ mod tests {
     use axum::{body::Body, http::Request};
     use base64::{Engine as _, engine::general_purpose::STANDARD};
     use futures_util::{SinkExt as _, StreamExt as _};
-    use gono_core::{
+    use gono_server_core::{
         Permission, RelPath, Username,
         app_passwords::{self, Scope},
         config::DbConfig,
@@ -380,7 +380,7 @@ mod tests {
         storage::DataLayout,
         users::{self, NewUser},
     };
-    use gono_nextcloud::{
+    use gono_server_nextcloud::{
         chunking::ChunkedUploads,
         notify_push::{Hub, PushSettings},
     };
@@ -464,7 +464,7 @@ mod tests {
                 .unwrap();
         let uploads = ChunkedUploads::new(
             dav.fs().clone(),
-            gono_core::locks::LockStore::new(pool.clone()),
+            gono_server_core::locks::LockStore::new(pool.clone()),
         );
         let limiter = Arc::new(RateLimiter::new());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

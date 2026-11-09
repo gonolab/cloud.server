@@ -29,8 +29,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use gono_core::meta::ChangeEvent;
-use gono_dav::Identity;
+use gono_server_core::meta::ChangeEvent;
+use gono_server_dav::Identity;
 
 use super::message::{self, LISTEN_FILE_ID, UpdatedFiles};
 
@@ -192,8 +192,8 @@ impl Outbox {
 
 #[cfg(test)]
 mod tests {
-    use gono_core::{RelPath, Username, meta::ChangeOperation};
-    use gono_dav::identity::Mount;
+    use gono_server_core::{RelPath, Username, meta::ChangeOperation};
+    use gono_server_dav::identity::Mount;
 
     use super::*;
 

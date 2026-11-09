@@ -4,7 +4,7 @@
 //! out; askama escapes every value. Element ids are fixed per page (see the uniqueness test).
 
 use askama::Template;
-use gono_core::{app_passwords::Scope, db};
+use gono_server_core::{app_passwords::Scope, db};
 
 use crate::commands::output::format_time;
 
@@ -83,7 +83,7 @@ pub struct OverviewPage {
     pub host: String,
     pub uptime: String,
     pub warnings: Vec<String>,
-    pub stats: gono_core::stats::Overview,
+    pub stats: gono_server_core::stats::Overview,
     pub users_note: String,
     pub storage_number: String,
     pub storage_unit: String,

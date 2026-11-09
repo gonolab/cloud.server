@@ -6,7 +6,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use bytes::Bytes;
 use dav_server::{DavHandler, ls::DavLockSystem};
-use gono_core::{
+use gono_server_core::{
     RelPath, Username,
     config::DbConfig,
     db::{self, OpenMode, Pool},
@@ -15,7 +15,7 @@ use gono_core::{
     storage::DataLayout,
     users::{self, NewUser},
 };
-use gono_dav::{Ctx, Identity, Mount, PropfindKind, RequestInfo, ScopedFs, metadata::Entry};
+use gono_server_dav::{Ctx, Identity, Mount, PropfindKind, RequestInfo, ScopedFs, metadata::Entry};
 use http::{HeaderMap, Request, StatusCode};
 use http_body_util::{BodyExt as _, Full};
 
@@ -276,13 +276,13 @@ impl Harness {
         }
         let ctx = Ctx::new(identity.clone(), info);
         let request = Request::from_parts(parts, body_full);
-        let response = gono_dav::locks::with_ctx(
+        let response = gono_server_dav::locks::with_ctx(
             ctx.clone(),
             handler.handle_guarded(request, identity.username.to_string(), ctx.clone()),
         )
         .await;
         let (parts, body) = response.into_parts();
-        let body = gono_dav::locks::CtxBody::new(ctx.clone(), body);
+        let body = gono_server_dav::locks::CtxBody::new(ctx.clone(), body);
         let body = body.collect().await.unwrap().to_bytes();
         Response {
             status: parts.status,

@@ -779,7 +779,39 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e4eba85ea1d0a966a983acd07deee566e67395d2d96b6fb39e62b5a833f1eb0b"
 
 [[package]]
-name = "gono-core"
+name = "gono-server"
+version = "1.0.0-dev"
+dependencies = [
+ "anyhow",
+ "askama",
+ "axum",
+ "base64",
+ "clap",
+ "dav-server",
+ "futures-util",
+ "gono-server-core",
+ "gono-server-dav",
+ "gono-server-nextcloud",
+ "http-body-util",
+ "ipnet",
+ "rpassword",
+ "secrecy",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "sqlx",
+ "tempfile",
+ "tokio",
+ "tokio-tungstenite",
+ "tower",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "url",
+]
+
+[[package]]
+name = "gono-server-core"
 version = "1.0.0-dev"
 dependencies = [
  "argon2",
@@ -800,13 +832,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "gono-dav"
+name = "gono-server-dav"
 version = "1.0.0-dev"
 dependencies = [
  "bytes",
  "dav-server",
  "futures-util",
- "gono-core",
+ "gono-server-core",
  "http",
  "http-body",
  "http-body-util",
@@ -827,13 +859,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "gono-nextcloud"
+name = "gono-server-nextcloud"
 version = "1.0.0-dev"
 dependencies = [
  "bytes",
  "dav-server",
- "gono-core",
- "gono-dav",
+ "gono-server-core",
+ "gono-server-dav",
  "http",
  "http-body",
  "http-body-util",
@@ -845,38 +877,6 @@ dependencies = [
  "tracing",
  "url",
  "xmltree",
-]
-
-[[package]]
-name = "gono-server"
-version = "1.0.0-dev"
-dependencies = [
- "anyhow",
- "askama",
- "axum",
- "base64",
- "clap",
- "dav-server",
- "futures-util",
- "gono-core",
- "gono-dav",
- "gono-nextcloud",
- "http-body-util",
- "ipnet",
- "rpassword",
- "secrecy",
- "serde",
- "serde_json",
- "sha2 0.11.1",
- "sqlx",
- "tempfile",
- "tokio",
- "tokio-tungstenite",
- "tower",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
- "url",
 ]
 
 [[package]]

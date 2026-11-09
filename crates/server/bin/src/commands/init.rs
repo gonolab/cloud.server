@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use anyhow::Context;
-use gono_core::{
+use gono_server_core::{
     Error, PRODUCT_NAME,
     config::LogLevel,
     db::{self, OpenMode},

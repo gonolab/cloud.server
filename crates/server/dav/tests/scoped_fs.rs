@@ -483,7 +483,7 @@ async fn directory_etags_propagate_and_ids_are_stable() {
     h.put(&full, "d1/d2/f.txt", "original").await.expect(201);
     let id = h.prop(&full, "d1/d2/f.txt", &oc("fileid")).await;
 
-    async fn etags(h: &Harness, full: &std::sync::Arc<gono_dav::Identity>) -> Vec<String> {
+    async fn etags(h: &Harness, full: &std::sync::Arc<gono_server_dav::Identity>) -> Vec<String> {
         let mut etags = Vec::new();
         for rel in ["", "d1", "d1/d2"] {
             etags.push(h.prop(full, rel, &dav("getetag")).await.unwrap());
@@ -543,7 +543,10 @@ async fn webdav_alias_reaches_the_same_files() {
         .body(http_body_util::Full::new(bytes::Bytes::new()))
         .unwrap();
     let (parts, body) = request.into_parts();
-    let ctx = gono_dav::Ctx::new(full.clone(), gono_dav::RequestInfo::from_parts(&parts));
+    let ctx = gono_server_dav::Ctx::new(
+        full.clone(),
+        gono_server_dav::RequestInfo::from_parts(&parts),
+    );
     let response = h
         .handler
         .handle_guarded(http::Request::from_parts(parts, body), "alice".into(), ctx)
@@ -577,9 +580,9 @@ async fn favorites_are_found_through_the_mounts() {
         mount("/Docs", "/docs", true),
         mount("/Pictures", "/media/photos", false),
     ]);
-    let ctx = gono_dav::Ctx::new(
+    let ctx = gono_server_dav::Ctx::new(
         scoped.clone(),
-        gono_dav::RequestInfo::new(http::Method::GET),
+        gono_server_dav::RequestInfo::new(http::Method::GET),
     );
     let below = |rel: &str| {
         let path = dav_server::davpath::DavPath::new(&Harness::url(rel)).unwrap();

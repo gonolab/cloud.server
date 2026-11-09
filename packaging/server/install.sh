@@ -596,9 +596,13 @@ install_release() {
 	fi
 
 	if [ "$fresh_config" = 1 ]; then
-		if [ "$DATA_DIR" != "$STATE_DIR/data" ]; then
+		if [ -d "$DATA_DIR" ]; then
+			# Checked to be empty above: hand it to the service user, which `init` runs as.
+			chown "$SERVICE_USER:$SERVICE_GROUP" "$DATA_DIR"
+			chmod 0750 "$DATA_DIR"
+		elif [ "$DATA_DIR" != "$STATE_DIR/data" ]; then
 			mkdir -p "$(dirname "$DATA_DIR")"
-			ensure_dir "$DATA_DIR" 0750 "$SERVICE_USER" "$SERVICE_GROUP"
+			install -d -m 0750 -o "$SERVICE_USER" -g "$SERVICE_GROUP" "$DATA_DIR"
 		fi
 		install -m 0640 -o root -g "$SERVICE_GROUP" "$WORK/config.toml" "$CONFIG_FILE"
 		log "Wrote $CONFIG_FILE"

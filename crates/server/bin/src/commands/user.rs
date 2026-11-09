@@ -111,6 +111,24 @@ pub async fn run(config_path: &Path, command: UserCommand) -> anyhow::Result<()>
             println!("Enabled user {username}.");
             Ok(())
         }
+        UserCommand::Promote { username } => {
+            users::set_admin(&pool, &username, true).await?;
+            println!("{username} is now an admin and can use the web admin UI.");
+            Ok(())
+        }
+        UserCommand::Demote { username } => {
+            users::set_admin(&pool, &username, false).await?;
+            println!("{username} is no longer an admin.");
+            Ok(())
+        }
+        UserCommand::SetDisplayName {
+            username,
+            display_name,
+        } => {
+            let stored = users::set_display_name(&pool, &username, &display_name).await?;
+            println!("Changed the display name of {username} to \"{stored}\".");
+            Ok(())
+        }
         UserCommand::Disable { username } => {
             let user = users::get(&pool, &username).await?;
             users::set_enabled(&pool, &username, false).await?;

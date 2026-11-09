@@ -478,6 +478,60 @@ fn users_can_be_managed() {
     }
 }
 
+/// The line of `user list` that shows one account.
+fn listed(instance: &Instance, username: &str) -> String {
+    let list = run(&mut instance.command(&["user", "list"]));
+    assert!(list.status.success(), "{}", text(&list.stderr));
+    text(&list.stdout)
+        .lines()
+        .find(|line| line.split_whitespace().nth(1) == Some(username))
+        .unwrap_or_else(|| panic!("{username} is not listed"))
+        .to_owned()
+}
+
+#[test]
+fn admins_can_be_promoted_and_demoted_and_renamed() {
+    let instance = Instance::new();
+    assert!(instance.init().status.success());
+    let add = run_with_stdin(
+        &mut instance.command(&["user", "add", "alice", "--password-stdin"]),
+        &format!("{PASSWORD}\n"),
+    );
+    assert!(add.status.success(), "{}", text(&add.stderr));
+
+    // The only admin cannot be demoted.
+    let demote = run(&mut instance.command(&["user", "demote", "admin"]));
+    assert!(!demote.status.success());
+    assert!(
+        text(&demote.stderr).contains("last enabled admin"),
+        "{}",
+        text(&demote.stderr)
+    );
+
+    // Columns: ID, USERNAME, DISPLAY NAME (one word here), ADMIN, ENABLED, CREATED.
+    let admin_column = |username: &str| {
+        let line = listed(&instance, username);
+        line.split_whitespace().nth(3).unwrap().to_owned()
+    };
+    let promote = run(&mut instance.command(&["user", "promote", "alice"]));
+    assert!(promote.status.success(), "{}", text(&promote.stderr));
+    assert_eq!(admin_column("alice"), "yes");
+    let demote = run(&mut instance.command(&["user", "demote", "admin"]));
+    assert!(demote.status.success(), "{}", text(&demote.stderr));
+    assert_eq!(admin_column("admin"), "no");
+
+    let rename =
+        run(&mut instance.command(&["user", "set-display-name", "alice", "Alice Example"]));
+    assert!(rename.status.success(), "{}", text(&rename.stderr));
+    assert!(listed(&instance, "alice").contains("Alice Example"));
+    let invalid = run(&mut instance.command(&["user", "set-display-name", "alice", "  "]));
+    assert!(!invalid.status.success());
+    assert!(text(&invalid.stderr).contains("invalid display name"));
+    let missing = run(&mut instance.command(&["user", "promote", "nobody"]));
+    assert!(!missing.status.success());
+    assert!(text(&missing.stderr).contains("does not exist"));
+}
+
 #[test]
 fn app_passwords_are_shown_once_and_can_be_revoked() {
     let instance = Instance::new();

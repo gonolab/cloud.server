@@ -14,10 +14,17 @@
   <div class="head-actions">
     {%- if is_self %}
     <span class="muted small">This is your account.</span>
-    {%- else if user.enabled %}
+    {%- else %}
+    {%- if user.is_admin %}
+    <form method="post" action="{{ base }}/demote"><input type="hidden" name="csrf" value="{{ frame.csrf }}"><button class="btn" type="submit">Remove admin</button></form>
+    {%- else %}
+    <form method="post" action="{{ base }}/promote"><input type="hidden" name="csrf" value="{{ frame.csrf }}"><button class="btn" type="submit">Make admin</button></form>
+    {%- endif %}
+    {%- if user.enabled %}
     <form method="post" action="{{ base }}/disable"><input type="hidden" name="csrf" value="{{ frame.csrf }}"><button class="btn" type="submit">Disable account</button></form>
     {%- else %}
     <form method="post" action="{{ base }}/enable"><input type="hidden" name="csrf" value="{{ frame.csrf }}"><button class="btn primary" type="submit">Enable account</button></form>
+    {%- endif %}
     {%- endif %}
   </div>
 </div>
@@ -76,6 +83,15 @@
     <div class="panel"><div class="panel-body">
       <h2>Account</h2>
       <dl class="facts mt-18"><dt>User id</dt><dd class="mono">{{ user.id }}</dd><dt>Created</dt><dd>{{ user.created }}</dd><dt>Changed</dt><dd>{{ user.updated }}</dd><dt>Storage used</dt><dd>{{ user.storage }}</dd></dl>
+    </div></div>
+    <div class="panel"><div class="panel-body">
+      <h2>Display name</h2>
+      <p class="muted small">The name clients show for this account.</p>
+      <form method="post" action="{{ base }}/display-name">
+        <input type="hidden" name="csrf" value="{{ frame.csrf }}">
+        <label class="field" for="dn-name"><span>Display name</span><input id="dn-name" type="text" name="display_name" value="{{ user.display_name }}" required></label>
+        <button class="btn block" type="submit">Change display name</button>
+      </form>
     </div></div>
     <div class="panel"><div class="panel-body">
       <h2>Web login password</h2>

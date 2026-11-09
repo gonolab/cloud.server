@@ -615,6 +615,162 @@ async fn admins_cannot_lock_themselves_out() {
 }
 
 #[tokio::test]
+async fn admins_are_promoted_and_demoted_but_not_themselves() {
+    let f = fixture().await;
+    let mut browser = Browser::new(&f.state);
+    let csrf = browser.root().await;
+    let alice = Username::new("alice").unwrap();
+
+    // The buttons match the account's role; the own account has none.
+    let page = browser.get(&path("/users/alice")).await;
+    assert!(page.body.contains("/users/alice/promote"));
+    assert!(!page.body.contains("/users/alice/demote"));
+    let own = browser.get(&path("/users/root")).await;
+    assert!(!own.body.contains("/users/root/demote"));
+
+    // Forms need the CSRF token and this origin, like every other change.
+    let missing = browser.post(&path("/users/alice/promote"), &[]).await;
+    assert_eq!(missing.status, StatusCode::FORBIDDEN);
+    let body = format!("csrf={csrf}");
+    let foreign = browser
+        .send(
+            "POST",
+            &path("/users/alice/promote"),
+            &[("Origin", "https://evil.example")],
+            body,
+        )
+        .await;
+    assert_eq!(foreign.status, StatusCode::FORBIDDEN);
+    assert!(!users::get(&f.state.db, &alice).await.unwrap().is_admin);
+
+    let promoted = browser
+        .post(&path("/users/alice/promote"), &[("csrf", &csrf)])
+        .await;
+    assert_eq!(promoted.location(), path("/users/alice?done=promoted"));
+    assert!(users::get(&f.state.db, &alice).await.unwrap().is_admin);
+    let page = browser.get(promoted.location()).await;
+    assert!(page.body.contains("alice is now an admin"));
+    assert!(page.body.contains("/users/alice/demote"));
+
+    // The new admin can sign in to the admin UI.
+    let mut other = Browser::new(&f.state);
+    let reply = other.sign_in("alice", ALICE_PASSWORD).await;
+    assert_eq!(reply.location(), path("/"));
+    let alice_csrf = other.get(&path("/")).await.csrf();
+
+    // Nobody demotes themself, even with another admin left.
+    let own = browser
+        .post(&path("/users/root/demote"), &[("csrf", &csrf)])
+        .await;
+    assert_eq!(own.status, StatusCode::CONFLICT);
+    assert!(
+        own.body
+            .contains("cannot demote the account you are signed in with")
+    );
+    let root = Username::new("root").unwrap();
+    assert!(users::get(&f.state.db, &root).await.unwrap().is_admin);
+
+    // Another admin may, and the demoted admin is locked out of the admin UI at once.
+    let demoted = other
+        .post(&path("/users/root/demote"), &[("csrf", &alice_csrf)])
+        .await;
+    assert_eq!(demoted.location(), path("/users/root?done=demoted"));
+    assert!(!users::get(&f.state.db, &root).await.unwrap().is_admin);
+    let refused = browser.get(&path("/users")).await;
+    assert_eq!(refused.status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn two_admins_demoting_each_other_leave_one_admin() {
+    let f = fixture().await;
+    let mut browser = Browser::new(&f.state);
+    let csrf = browser.root().await;
+    add_user(&f.state.db, &f.layout, "ops", "ops password", true).await;
+    let mut other = Browser::new(&f.state);
+    let reply = other.sign_in("ops", "ops password").await;
+    assert_eq!(reply.status, StatusCode::SEE_OTHER);
+    let other_csrf = other.get(&path("/")).await.csrf();
+    let (ops_url, root_url) = (path("/users/ops/demote"), path("/users/root/demote"));
+    let (root_fields, ops_fields) = ([("csrf", csrf.as_str())], [("csrf", other_csrf.as_str())]);
+    let (first, second) = tokio::join!(
+        browser.post(&ops_url, &root_fields),
+        other.post(&root_url, &ops_fields)
+    );
+    let enabled_admins: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE is_admin = 1 AND enabled = 1")
+            .fetch_one(&f.state.db)
+            .await
+            .unwrap();
+    assert_eq!(enabled_admins, 1, "{} / {}", first.status, second.status);
+    // The refused side sees why, or no longer reaches the admin UI at all.
+    let statuses = [first.status, second.status];
+    assert!(statuses.contains(&StatusCode::SEE_OTHER), "{statuses:?}");
+}
+
+#[tokio::test]
+async fn display_names_are_changed_and_validated() {
+    let f = fixture().await;
+    let mut browser = Browser::new(&f.state);
+    let csrf = browser.root().await;
+    let alice = Username::new("alice").unwrap();
+
+    let page = browser.get(&path("/users/alice")).await;
+    assert!(page.body.contains("/users/alice/display-name"));
+
+    let missing = browser
+        .post(
+            &path("/users/alice/display-name"),
+            &[("display_name", "Mallory")],
+        )
+        .await;
+    assert_eq!(missing.status, StatusCode::FORBIDDEN);
+
+    let renamed = browser
+        .post(
+            &path("/users/alice/display-name"),
+            &[("csrf", &csrf), ("display_name", "  Alice <Example> ")],
+        )
+        .await;
+    assert_eq!(renamed.location(), path("/users/alice?done=renamed"));
+    assert_eq!(
+        users::get(&f.state.db, &alice).await.unwrap().display_name,
+        "Alice <Example>"
+    );
+    let page = browser.get(renamed.location()).await;
+    assert!(page.body.contains("The display name was changed."));
+    // Shown escaped.
+    assert!(
+        page.body.contains("Alice &#60;Example&#62;")
+            || page.body.contains("Alice &lt;Example&gt;")
+    );
+    assert!(!page.body.contains("<Example>"));
+
+    for bad in ["   ", "a\u{1}b"] {
+        let reply = browser
+            .post(
+                &path("/users/alice/display-name"),
+                &[("csrf", &csrf), ("display_name", bad)],
+            )
+            .await;
+        assert_eq!(reply.status, StatusCode::UNPROCESSABLE_ENTITY, "{bad:?}");
+        assert!(reply.body.contains("invalid display name"), "{bad:?}");
+    }
+    assert_eq!(
+        users::get(&f.state.db, &alice).await.unwrap().display_name,
+        "Alice <Example>"
+    );
+
+    // Admins may rename their own account.
+    let own = browser
+        .post(
+            &path("/users/root/display-name"),
+            &[("csrf", &csrf), ("display_name", "Root Admin")],
+        )
+        .await;
+    assert_eq!(own.location(), path("/users/root?done=renamed"));
+}
+
+#[tokio::test]
 async fn app_passwords_are_created_shown_once_and_revoked() {
     let f = fixture().await;
     let mut browser = Browser::new(&f.state);

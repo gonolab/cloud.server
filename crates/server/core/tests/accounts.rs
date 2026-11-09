@@ -213,6 +213,85 @@ async fn the_last_enabled_admin_can_be_neither_disabled_nor_deleted() {
 }
 
 #[tokio::test]
+async fn admins_can_be_promoted_and_demoted_but_one_stays() {
+    let dir = tempfile::tempdir().unwrap();
+    let pool = database(dir.path()).await;
+    let root = Username::new("root").unwrap();
+    let alice = Username::new("alice").unwrap();
+    add_admin(&pool, "root").await;
+    add_user(&pool, "alice").await;
+
+    // The only enabled admin cannot be demoted.
+    assert!(matches!(
+        users::set_admin(&pool, &root, false).await,
+        Err(Error::LastAdmin(_))
+    ));
+    // Demoting an ordinary account is a no-op, promoting an admin as well.
+    users::set_admin(&pool, &alice, false).await.unwrap();
+    users::set_admin(&pool, &root, true).await.unwrap();
+
+    users::set_admin(&pool, &alice, true).await.unwrap();
+    assert!(users::get(&pool, &alice).await.unwrap().is_admin);
+    users::set_admin(&pool, &root, false).await.unwrap();
+    assert!(!users::get(&pool, &root).await.unwrap().is_admin);
+    assert!(matches!(
+        users::set_admin(&pool, &alice, false).await,
+        Err(Error::LastAdmin(_))
+    ));
+
+    // A disabled admin does not count: promoting root again and disabling it leaves alice as
+    // the only enabled admin.
+    users::set_admin(&pool, &root, true).await.unwrap();
+    users::set_enabled(&pool, &root, false).await.unwrap();
+    assert!(matches!(
+        users::set_admin(&pool, &alice, false).await,
+        Err(Error::LastAdmin(_))
+    ));
+    // Demoting the disabled admin is allowed.
+    users::set_admin(&pool, &root, false).await.unwrap();
+
+    assert!(matches!(
+        users::set_admin(&pool, &Username::new("nobody").unwrap(), true).await,
+        Err(Error::UserNotFound(_))
+    ));
+}
+
+#[tokio::test]
+async fn display_names_can_be_changed() {
+    let dir = tempfile::tempdir().unwrap();
+    let pool = database(dir.path()).await;
+    let alice = Username::new("alice").unwrap();
+    add_user(&pool, "alice").await;
+    let before = users::get(&pool, &alice).await.unwrap();
+
+    let stored = users::set_display_name(&pool, &alice, "  Alice Example ")
+        .await
+        .unwrap();
+    assert_eq!(stored, "Alice Example");
+    let after = users::get(&pool, &alice).await.unwrap();
+    assert_eq!(after.display_name, "Alice Example");
+    assert!(after.updated_at >= before.updated_at);
+
+    for bad in ["", "   ", "a\nb", &"x".repeat(256)] {
+        assert!(
+            matches!(
+                users::set_display_name(&pool, &alice, bad).await,
+                Err(Error::InvalidDisplayName(_))
+            ),
+            "{bad:?}"
+        );
+    }
+    assert_eq!(
+        users::get(&pool, &alice).await.unwrap().display_name,
+        "Alice Example"
+    );
+    assert!(matches!(
+        users::set_display_name(&pool, &Username::new("nobody").unwrap(), "Nobody").await,
+        Err(Error::UserNotFound(_))
+    ));
+}
+
+#[tokio::test]
 async fn concurrent_admin_removals_leave_one_admin() {
     let dir = tempfile::tempdir().unwrap();
     let pool = database(dir.path()).await;
@@ -223,7 +302,7 @@ async fn concurrent_admin_removals_leave_one_admin() {
     for name in &names {
         add_admin(&pool, name.as_str()).await;
     }
-    // Every admin tries to disable or delete itself at the same moment.
+    // Every admin tries to disable, delete or demote itself at the same moment.
     let tasks: Vec<_> = names
         .iter()
         .enumerate()
@@ -231,10 +310,10 @@ async fn concurrent_admin_removals_leave_one_admin() {
             let pool = pool.clone();
             let name = name.clone();
             tokio::spawn(async move {
-                if index % 2 == 0 {
-                    users::set_enabled(&pool, &name, false).await
-                } else {
-                    users::delete(&pool, &name).await.map(|_| ())
+                match index % 3 {
+                    0 => users::set_enabled(&pool, &name, false).await,
+                    1 => users::delete(&pool, &name).await.map(|_| ()),
+                    _ => users::set_admin(&pool, &name, false).await,
                 }
             })
         })

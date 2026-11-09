@@ -9,6 +9,8 @@
 //! | `GET  <p>/new-user`, `POST <p>/users` | Create an account. |
 //! | `GET  <p>/users/<name>` | One account with its app passwords. |
 //! | `POST <p>/users/<name>/enable`, `.../disable` | Enable or disable the account. |
+//! | `POST <p>/users/<name>/promote`, `.../demote` | Grant or withdraw admin access. |
+//! | `POST <p>/users/<name>/display-name` | Change the display name. |
 //! | `POST <p>/users/<name>/password` | Set the web login password. |
 //! | `GET  <p>/users/<name>/delete`, `POST` the same | Confirm and delete the account. |
 //! | `POST <p>/users/<name>/app-passwords` | Create an app password, then show it once at `<p>/created`. |
@@ -28,9 +30,10 @@
 //! - **New app passwords** are kept in memory, bound to the session that created them, and
 //!   shown exactly once at `<p>/created` (`Cache-Control: no-store`); the URL carries no
 //!   secret, so nothing sensitive reaches logs or history.
-//! - **The last enabled admin** cannot be disabled or deleted ([`users::set_enabled`],
-//!   [`users::delete`] check it in the same transaction), and an admin cannot disable or
-//!   delete the account they are signed in with.
+//! - **The last enabled admin** cannot be disabled, demoted or deleted
+//!   ([`users::set_enabled`], [`users::set_admin`] and [`users::delete`] check it in the same
+//!   transaction), and an admin cannot disable, demote or delete the account they are signed in
+//!   with.
 
 mod pages;
 
@@ -202,6 +205,12 @@ pub fn routes(prefix: &str) -> Router<AppState> {
         .route(&format!("{p}/users/{{name}}"), get(user_page))
         .route(&format!("{p}/users/{{name}}/enable"), post(enable))
         .route(&format!("{p}/users/{{name}}/disable"), post(disable))
+        .route(&format!("{p}/users/{{name}}/promote"), post(promote))
+        .route(&format!("{p}/users/{{name}}/demote"), post(demote))
+        .route(
+            &format!("{p}/users/{{name}}/display-name"),
+            post(set_display_name),
+        )
         .route(&format!("{p}/users/{{name}}/password"), post(set_password))
         .route(
             &format!("{p}/users/{{name}}/delete"),
@@ -972,6 +981,15 @@ async fn user_page(
         Some("disabled") => Some(
             "The account was disabled. Its devices and browser sessions are signed out.".to_owned(),
         ),
+        Some("promoted") => Some(format!(
+            "{} is now an admin and can sign in to this admin UI.",
+            user.username
+        )),
+        Some("demoted") => Some(format!(
+            "{} is no longer an admin. Their files and devices are not affected.",
+            user.username
+        )),
+        Some("renamed") => Some("The display name was changed.".to_owned()),
         Some("password") => Some("The web login password was set.".to_owned()),
         Some("revoked") => Some("The app password was revoked.".to_owned()),
         _ => None,
@@ -1063,6 +1081,112 @@ async fn set_enabled(
     let done = if enabled { "enabled" } else { "disabled" };
     see_other(&format!(
         "{}?done={done}",
+        admin.user_url(user.username.as_str())
+    ))
+}
+
+async fn promote(
+    state: State<AppState>,
+    headers: HeaderMap,
+    name: Path<String>,
+    form: Form<CsrfForm>,
+) -> Response {
+    set_admin(state, headers, name, form, true).await
+}
+
+async fn demote(
+    state: State<AppState>,
+    headers: HeaderMap,
+    name: Path<String>,
+    form: Form<CsrfForm>,
+) -> Response {
+    set_admin(state, headers, name, form, false).await
+}
+
+async fn set_admin(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(name): Path<String>,
+    Form(form): Form<CsrfForm>,
+    is_admin: bool,
+) -> Response {
+    let admin = match admin(&state) {
+        Ok(admin) => admin,
+        Err(halt) => return *halt,
+    };
+    let session = match form_session(&state, &admin, &headers, &form.csrf).await {
+        Ok(session) => session,
+        Err(halt) => return *halt,
+    };
+    let user = match find_user(&state, &admin, &session, &name).await {
+        Ok(user) => user,
+        Err(halt) => return *halt,
+    };
+    // Another admin has to do it, so that nobody locks themself out by accident.
+    if !is_admin && user.id == session.user.user_id {
+        let error = "You cannot demote the account you are signed in with.".to_owned();
+        return user_error(&state, &admin, &session, &user, StatusCode::CONFLICT, error).await;
+    }
+    match users::set_admin(&state.db, &user.username, is_admin).await {
+        Ok(()) => {}
+        Err(err @ CoreError::LastAdmin(_)) => {
+            return user_error(
+                &state,
+                &admin,
+                &session,
+                &user,
+                StatusCode::CONFLICT,
+                err.to_string(),
+            )
+            .await;
+        }
+        Err(err) => return internal_error(&err),
+    }
+    tracing::info!(by = %session.user.username, user = %user.username, is_admin, "admin changed an account's role");
+    let done = if is_admin { "promoted" } else { "demoted" };
+    see_other(&format!(
+        "{}?done={done}",
+        admin.user_url(user.username.as_str())
+    ))
+}
+
+#[derive(Deserialize)]
+struct DisplayNameForm {
+    #[serde(default)]
+    csrf: String,
+    #[serde(default)]
+    display_name: String,
+}
+
+async fn set_display_name(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(name): Path<String>,
+    Form(form): Form<DisplayNameForm>,
+) -> Response {
+    let admin = match admin(&state) {
+        Ok(admin) => admin,
+        Err(halt) => return *halt,
+    };
+    let session = match form_session(&state, &admin, &headers, &form.csrf).await {
+        Ok(session) => session,
+        Err(halt) => return *halt,
+    };
+    let user = match find_user(&state, &admin, &session, &name).await {
+        Ok(user) => user,
+        Err(halt) => return *halt,
+    };
+    match users::set_display_name(&state.db, &user.username, &form.display_name).await {
+        Ok(_) => {}
+        Err(err @ CoreError::InvalidDisplayName(_)) => {
+            let status = StatusCode::UNPROCESSABLE_ENTITY;
+            return user_error(&state, &admin, &session, &user, status, err.to_string()).await;
+        }
+        Err(err) => return internal_error(&err),
+    }
+    tracing::info!(by = %session.user.username, user = %user.username, "admin changed a display name");
+    see_other(&format!(
+        "{}?done=renamed",
         admin.user_url(user.username.as_str())
     ))
 }

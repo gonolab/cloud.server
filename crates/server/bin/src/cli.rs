@@ -137,6 +137,27 @@ pub enum UserCommand {
         /// Account to disable.
         username: Username,
     },
+
+    /// Grant a user access to the web admin UI.
+    Promote {
+        /// Account to make an admin.
+        username: Username,
+    },
+
+    /// Withdraw a user's access to the web admin UI. The last enabled admin cannot be demoted.
+    Demote {
+        /// Admin account to turn into an ordinary account.
+        username: Username,
+    },
+
+    /// Change the name clients show for a user.
+    SetDisplayName {
+        /// Account whose display name changes.
+        username: Username,
+
+        /// New display name: not empty, at most 255 characters, no control characters.
+        display_name: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -370,10 +391,14 @@ mod tests {
             &["user", "set-password", "alice", "--password-stdin"],
             &["user", "enable", "alice"],
             &["user", "disable", "alice"],
+            &["user", "promote", "alice"],
+            &["user", "demote", "alice"],
+            &["user", "set-display-name", "alice", "Alice Example"],
             &["app-password", "list", "alice"],
             &["app-password", "delete", "alice", "7"],
         ] {
             assert!(parse(args).is_ok(), "{args:?}");
         }
+        assert!(parse(&["user", "set-display-name", "alice"]).is_err());
     }
 }

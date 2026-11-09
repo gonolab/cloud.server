@@ -5,10 +5,10 @@
 //! transaction commits, so a failure leaves neither a half-created account nor an orphaned
 //! database row behind.
 //!
-//! **At least one enabled admin remains.** [`delete`] and [`set_enabled`] refuse to remove or
-//! disable the last enabled admin account ([`Error::LastAdmin`]). The check runs inside the
-//! same `BEGIN IMMEDIATE` transaction as the change, so two admins disabling each other at the
-//! same moment cannot both succeed.
+//! **At least one enabled admin remains.** [`delete`], [`set_enabled`] and [`set_admin`] refuse
+//! to remove, disable or demote the last enabled admin account ([`Error::LastAdmin`]). The check
+//! runs inside the same `BEGIN IMMEDIATE` transaction as the change, so two admins disabling or
+//! demoting each other at the same moment cannot both succeed.
 
 use sqlx::FromRow;
 
@@ -23,9 +23,16 @@ pub const MAX_DISPLAY_NAME_CHARS: usize = 255;
 
 /// Validates a display name, defaulting to the username when none is given.
 pub fn display_name_or_default(display_name: Option<&str>, username: &Username) -> Result<String> {
-    let Some(display_name) = display_name else {
-        return Ok(username.as_str().to_owned());
-    };
+    match display_name {
+        Some(display_name) => validate_display_name(display_name),
+        None => Ok(username.as_str().to_owned()),
+    }
+}
+
+/// Validates a display name and returns it without surrounding whitespace: it must not be
+/// empty, must be at most [`MAX_DISPLAY_NAME_CHARS`] characters long and must not contain
+/// control characters.
+pub fn validate_display_name(display_name: &str) -> Result<String> {
     let display_name = display_name.trim();
     if display_name.is_empty() {
         return Err(Error::InvalidDisplayName("must not be empty"));
@@ -278,6 +285,53 @@ pub async fn set_enabled(pool: &Pool, username: &Username, enabled: bool) -> Res
     }
     tx.commit().await?;
     Ok(())
+}
+
+/// Grants or withdraws access to the web admin UI. The last enabled admin cannot be demoted.
+/// Granting the flag to an admin, or withdrawing it from an ordinary account, changes nothing
+/// and succeeds.
+///
+/// The admin UI checks the flag on every request, so a demoted admin loses access at once; their
+/// browser sessions stay valid for the Login Flow pages.
+pub async fn set_admin(pool: &Pool, username: &Username, is_admin: bool) -> Result<()> {
+    let mut tx = db::begin_immediate(pool).await?;
+    if !is_admin {
+        keep_an_admin(&mut tx, username).await?;
+    }
+    let result = sqlx::query("UPDATE users SET is_admin = ?2, updated_at = ?3 WHERE username = ?1")
+        .bind(username.as_str())
+        .bind(is_admin)
+        .bind(db::unix_now())
+        .execute(&mut *tx)
+        .await?;
+    if result.rows_affected() == 0 {
+        return Err(Error::UserNotFound(username.clone()));
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Changes the display name of an account and returns the name as stored (validated with
+/// [`validate_display_name`], so without surrounding whitespace).
+pub async fn set_display_name(
+    pool: &Pool,
+    username: &Username,
+    display_name: &str,
+) -> Result<String> {
+    let display_name = validate_display_name(display_name)?;
+    let mut tx = db::begin_immediate(pool).await?;
+    let result =
+        sqlx::query("UPDATE users SET display_name = ?2, updated_at = ?3 WHERE username = ?1")
+            .bind(username.as_str())
+            .bind(&display_name)
+            .bind(db::unix_now())
+            .execute(&mut *tx)
+            .await?;
+    if result.rows_affected() == 0 {
+        return Err(Error::UserNotFound(username.clone()));
+    }
+    tx.commit().await?;
+    Ok(display_name)
 }
 
 #[cfg(test)]

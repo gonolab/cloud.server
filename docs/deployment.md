@@ -12,7 +12,7 @@ Commands below use the Linux paths. On macOS, replace them as listed in
 
 | | |
 |---|---|
-| **Linux** | x86_64 or aarch64 with systemd and glibc 2.28 or newer: Debian 10, Ubuntu 20.04, RHEL, Rocky and AlmaLinux 8, Fedora, and later. systemd 247 or newer applies every hardening option of the unit; older versions ignore some of them with a warning. Distributions without glibc (Alpine) need a build from source. |
+| **Linux** | x86_64 or aarch64, any distribution: the binary is statically linked (musl) and needs no C library, so glibc-based and musl-based systems (Alpine) work alike. The install script and the unit need systemd; systemd 247 or newer applies every hardening option of the unit, older versions ignore some of them with a warning. Without systemd, run the binary from the archive with your own service manager ([Installing by hand](#installing-by-hand)). |
 | **macOS** | macOS 11 or newer, Apple silicon or Intel. |
 | **Reverse proxy** | nginx or Caddy on the same host, terminating HTTPS for a domain name. Gono Cloud has no TLS of its own and listens on `127.0.0.1:16102`. |
 | **Storage** | A local file system for the database and the data directory; the data directory must be a single file system. A case-sensitive file system (ext4, XFS, Btrfs, case-sensitive APFS) is recommended: on a case-insensitive one, `Report.pdf` and `report.pdf` cannot coexist. Keep the SQLite database off network file systems. |
@@ -66,7 +66,7 @@ hand, and that they were built by this repository's release workflow:
 
 ```sh
 sha256sum --check --ignore-missing SHA256SUMS      # macOS: shasum -a 256 --check --ignore-missing SHA256SUMS
-gh attestation verify gono-cloud-1.0.0-x86_64-unknown-linux-gnu.tar.gz --repo gonolab/cloud.server
+gh attestation verify gono-cloud-1.0.0-x86_64-unknown-linux-musl.tar.gz --repo gonolab/cloud.server
 ```
 
 ### Paths
@@ -91,8 +91,8 @@ users.
 The release archive contains everything the script uses. On Linux:
 
 ```sh
-tar -xzf gono-cloud-1.0.0-x86_64-unknown-linux-gnu.tar.gz
-cd gono-cloud-1.0.0-x86_64-unknown-linux-gnu
+tar -xzf gono-cloud-1.0.0-x86_64-unknown-linux-musl.tar.gz
+cd gono-cloud-1.0.0-x86_64-unknown-linux-musl
 
 sudo useradd --system --user-group --home-dir /var/lib/gono-cloud --no-create-home \
   --shell /usr/sbin/nologin gono-cloud
@@ -115,6 +115,12 @@ sudo systemctl enable --now gono-cloud
 
 The unit expects exactly these paths. To use others, override them in a drop-in (see
 [Service management](#service-management)) rather than editing the unit, which upgrades replace.
+
+On a system without systemd (Alpine with OpenRC, a container), skip the unit: create the user,
+directories and configuration the same way (on Alpine:
+`addgroup -S gono-cloud && adduser -S -D -H -G gono-cloud gono-cloud`) and let the
+service manager run `gono-cloud --config /etc/gono-cloud/config.toml serve` as `gono-cloud`. It
+logs to standard output and stops cleanly on SIGTERM within 30 seconds.
 
 ## The first admin account
 

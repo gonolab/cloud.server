@@ -31,8 +31,8 @@ listed under "In scope" is deferred until after v1.
   name, web login password, delete) and app passwords.
 - **CLI**: `init`, `serve`, `config check`, user and app password management (including
   promoting and demoting admins and changing display names), and a manual `rescan` command.
-- **Packaging**: release archives for Linux (x86_64 and aarch64, glibc 2.28 or newer) and
-  macOS (Apple silicon and Intel), a hardened systemd unit, a launchd job and an install script
+- **Packaging**: release archives for Linux (x86_64 and aarch64, static binaries for any
+  distribution) and macOS (Apple silicon and Intel), a hardened systemd unit, a launchd job and an install script
   for installs, upgrades and uninstalls (see `docs/deployment.md`).
 
 ## Out of scope for v1
@@ -41,8 +41,8 @@ listed under "In scope" is deferred until after v1.
 - Built-in TLS. HTTPS is terminated by a reverse proxy.
 - Automatic detection of changes made directly in the data directory.
 - Migration from the legacy v0.1.x releases. There are no deployments to migrate.
-- Release builds for Linux without glibc (Alpine and other musl distributions), Windows, and a
-  container image. The server builds from source on other Unix systems.
+- Release builds for Windows, other Unix systems and a container image. The server builds from
+  source on other Unix systems; the static Linux binary runs in any container image.
 - Sharing and public links, calendar and contacts, previews and thumbnails, file versions, trash
   bin, and end-to-end encryption.
 
@@ -72,11 +72,16 @@ forwarding headers only when the request comes from a configured trusted proxy.
 
 ### Packaging
 
-The Linux binaries are linked against glibc 2.28 with cargo-zigbuild instead of being built
-against the release runner's newer glibc, so one build covers RHEL 8, Debian 10, Ubuntu 20.04
-and later. Static musl builds were not added: musl's allocator is markedly slower under
-concurrent load, and the glibc baseline already covers the supported distributions. The Intel
-macOS build is cross-compiled on Apple silicon, which costs one more build job.
+The Linux binaries are fully static: they are built for the musl targets with cargo-zigbuild,
+which also compiles the bundled SQLite and mimalloc, and need no C library on the system. One
+binary per architecture runs on every distribution, glibc-based or musl-based (Alpine), and in
+any container image. musl's own allocator serializes on a global lock, so musl builds use
+mimalloc as the global allocator (other builds keep the system allocator). On 4 vCPUs (aarch64
+Linux VM, PROPFIND and GET with 64 concurrent requests) musl's allocator, mimalloc and glibc's
+allocator measured within noise of each other; mimalloc guards against the lock contention that
+grows with the number of cores. musl's resolver and thread stack sizes do not affect the server
+(see `packaging/server/README.md`). The Intel macOS build is cross-compiled on Apple silicon,
+which costs one more build job.
 
 The server runs as a dedicated system user (`gono-cloud`, `_gono-cloud` on macOS) that owns the
 database and the data directory. The configuration belongs to root and is only readable by the

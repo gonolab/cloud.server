@@ -36,8 +36,9 @@ their tags stay as they are.
   refused.
 - Management commands and `serve` refuse to run as root on an installation that belongs to the
   service user, so they cannot leave files behind that the service cannot write.
-- Release archives for Linux (x86_64, aarch64; glibc 2.28 or newer) and macOS (Apple silicon,
-  Intel) with a hardened systemd unit, a launchd job (`cloud.gono.server`) and an install script
+- Release archives for Linux (x86_64, aarch64; fully static musl binaries with mimalloc that run
+  on any distribution, without glibc) and macOS (Apple silicon, Intel) with a hardened systemd
+  unit, a launchd job (`cloud.gono.server`) and an install script
   that verifies the archive, creates a service user, runs `init` on fresh installs, backs the
   database up before upgrades and never deletes data when uninstalling.
 - Documentation: deployment (`docs/deployment.md`), reverse proxies (`docs/reverse-proxy.md`),

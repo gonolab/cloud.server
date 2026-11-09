@@ -163,6 +163,29 @@ async fn deep_locks_cover_descendants_and_show_in_propfind() {
     );
 }
 
+/// litmus sends the lock owner as text in a default namespace (`<lockinfo xmlns="DAV:">`).
+#[tokio::test]
+async fn owners_in_a_default_namespace_survive_storage() {
+    let h = harness(3600).await;
+    let full = h.full();
+    h.put(&full, "owned.txt", "x").await.expect(201);
+    let lockinfo = r#"<?xml version="1.0" encoding="utf-8"?><lockinfo xmlns="DAV:"><lockscope><exclusive/></lockscope><locktype><write/></locktype><owner>litmus test suite</owner></lockinfo>"#;
+    let lock = h
+        .send(&full, "LOCK", "owned.txt", &[("Depth", "0")], lockinfo)
+        .await;
+    lock.expect(200);
+    assert!(lock.text().contains("litmus test suite"), "{}", lock.text());
+    let discovery = r#"<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:prop><d:lockdiscovery/></d:prop></d:propfind>"#;
+    let found = h
+        .send(&full, "PROPFIND", "owned.txt", &[("Depth", "0")], discovery)
+        .await;
+    assert!(
+        found.text().contains("litmus test suite"),
+        "{}",
+        found.text()
+    );
+}
+
 #[tokio::test]
 async fn locks_follow_storage_paths_across_mounts_and_restarts() {
     let h = harness(3600).await;

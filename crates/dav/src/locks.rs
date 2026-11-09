@@ -29,7 +29,7 @@ use gono_core::{
     locks::{Lock, LockStore},
 };
 use http_body::{Body, Frame, SizeHint};
-use xmltree::Element;
+use xmltree::{Element, Namespace};
 
 use crate::{
     ctx::Ctx,
@@ -178,7 +178,18 @@ impl SqliteLs {
     }
 }
 
+/// Serializes the client's `<D:owner>` element so that it parses back.
+///
+/// dav-server renames the element to the `D` prefix without declaring it (the request may have
+/// used a default namespace), which would make the stored XML unparsable; the element's own
+/// prefix is therefore declared on it before writing.
 fn serialize(owner: &Element) -> Option<Vec<u8>> {
+    let mut owner = owner.clone();
+    let mut namespaces = owner.namespaces.take().unwrap_or_else(Namespace::empty);
+    if let (Some(prefix), Some(uri)) = (&owner.prefix, &owner.namespace) {
+        namespaces.put(prefix.clone(), uri.clone());
+    }
+    owner.namespaces = Some(namespaces);
     let mut xml = Vec::new();
     owner.write(&mut xml).ok()?;
     Some(xml)

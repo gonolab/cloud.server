@@ -59,9 +59,16 @@ done
 annotate() {
   local title="$1" message="$2"
   if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+    # Workflow command escaping: data needs %, CR, LF encoded; properties (the title) also
+    # ':' and ',', or the runner drops the whole command (test names contain "::").
     message="${message//'%'/'%25'}"
     message="${message//$'\r'/'%0D'}"
     message="${message//$'\n'/'%0A'}"
+    title="${title//'%'/'%25'}"
+    title="${title//$'\r'/'%0D'}"
+    title="${title//$'\n'/'%0A'}"
+    title="${title//':'/'%3A'}"
+    title="${title//','/'%2C'}"
     echo "::error title=${title}::${message}"
   fi
 }

@@ -70,7 +70,8 @@ impl std::fmt::Debug for DavService {
     }
 }
 
-fn simple(status: StatusCode) -> Response<DavBody> {
+/// An empty response with `status`.
+pub(crate) fn simple(status: StatusCode) -> Response<DavBody> {
     let mut response = Response::new(Empty::new().map_err(|never| match never {}).boxed_unsync());
     *response.status_mut() = status;
     response
@@ -79,10 +80,8 @@ fn simple(status: StatusCode) -> Response<DavBody> {
     response
 }
 
-fn xml_error(status: StatusCode, condition: &str) -> Response<DavBody> {
-    let body = format!(
-        "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<D:error xmlns:D=\"DAV:\"><D:{condition}/></D:error>\n"
-    );
+/// A response with an XML body.
+pub(crate) fn xml_body(status: StatusCode, body: String) -> Response<DavBody> {
     let mut response = Response::new(
         Full::new(Bytes::from(body))
             .map_err(|never| match never {})
@@ -94,6 +93,15 @@ fn xml_error(status: StatusCode, condition: &str) -> Response<DavBody> {
         HeaderValue::from_static("application/xml; charset=utf-8"),
     );
     response
+}
+
+fn xml_error(status: StatusCode, condition: &str) -> Response<DavBody> {
+    xml_body(
+        status,
+        format!(
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<D:error xmlns:D=\"DAV:\"><D:{condition}/></D:error>\n"
+        ),
+    )
 }
 
 /// Whether every segment of a percent-encoded path is acceptable (see the module docs).

@@ -19,15 +19,6 @@ nextcloud::dir_etag_propagates_on_chunked_upload
 # Defect 5 (OC-Total-Length is not verified) belongs to the chunked upload implementation.
 nextcloud::regression_chunked_upload_verifies_total_length
 
-# Phase 3: the oc:filter-files REPORT is served outside dav-server and does not exist yet
-# (REPORT answers 405).
-nextcloud::filter_files_report_lists_favorites_recursively
-nextcloud::filter_files_report_follows_delete_and_move
-# Defect 3: also compares the getetag of a filter-files REPORT. The ETags of PUT, OC-ETag, HEAD,
-# GET and PROPFIND already agree (regression_if_match_with_put_etag_succeeds,
-# if_match_with_propfind_etag_succeeds and the server's router tests cover them).
-nextcloud::regression_etag_is_identical_across_methods
-
 # Phase 3: Login Flow v2 (/index.php/login/v2) is not routed yet.
 login_flow::login_flow_init_returns_poll_and_login_urls
 login_flow::login_flow_poll_is_pending_until_the_user_logs_in

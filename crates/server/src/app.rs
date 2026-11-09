@@ -4,8 +4,9 @@
 //! - `GET /status.php`, the connectivity probe `/index.php/204` and the OCS API under
 //!   `/ocs/v{1,2}.php/` (and the `/index.php/` aliases): see [`crate::nextcloud`].
 //! - `/remote.php/dav/files/<user>/...` and the legacy alias `/remote.php/webdav/...`: WebDAV,
-//!   served by the single `DavHandler` inside [`DavService`]. Requests are authenticated with
-//!   an app password; `<user>` must be the authenticated user.
+//!   served by the single `DavHandler` inside [`DavService`], except `REPORT`, which goes to
+//!   [`gono_dav::report`] (the `filter-files` favorites report). Requests are authenticated
+//!   with an app password; `<user>` must be the authenticated user.
 //! - `/remote.php/dav/uploads/<user>/...`: Nextcloud chunked upload. Only authorization is in
 //!   place so far (other users' namespaces and read-only scopes are refused); the protocol
 //!   itself answers 501 until it is implemented.
@@ -26,7 +27,7 @@ use axum::{
     routing::{any, get},
 };
 use gono_core::db;
-use gono_dav::{DavService, Identity, OcHeadersLayer, resolve::FILES_ROOT};
+use gono_dav::{DavService, Identity, OcHeadersLayer, report, resolve::FILES_ROOT};
 use ipnet::IpNet;
 
 use crate::{
@@ -173,7 +174,7 @@ async fn files(
     if url_user(request.uri().path(), FILES_ROOT).as_deref() != Some(identity.username.as_str()) {
         return StatusCode::FORBIDDEN.into_response();
     }
-    state.dav.handle(identity, request).await.map(Body::new)
+    serve_dav(&state, identity, request).await
 }
 
 /// `/remote.php/webdav/...`: always the authenticated user's files.
@@ -183,9 +184,20 @@ async fn webdav(
     request: Request,
 ) -> Response {
     match authenticate(&state, peer, request.headers()).await {
-        Ok(identity) => state.dav.handle(identity, request).await.map(Body::new),
+        Ok(identity) => serve_dav(&state, identity, request).await,
         Err(rejection) => rejection.into_response(),
     }
+}
+
+/// Hands an authenticated WebDAV request to dav-server, except `REPORT`, which dav-server does
+/// not implement (see [`gono_dav::report`]).
+async fn serve_dav(state: &AppState, identity: Arc<Identity>, request: Request) -> Response {
+    if request.method().as_str() == "REPORT" {
+        return report::handle(&state.dav, identity, request)
+            .await
+            .map(Body::new);
+    }
+    state.dav.handle(identity, request).await.map(Body::new)
 }
 
 /// `/remote.php/dav/uploads/<user>/...`: authorization only, see the module documentation.
@@ -438,6 +450,100 @@ mod tests {
         let dir = f.send("HEAD", FILES, Some(&f.full), &[], "").await;
         assert_eq!(dir.status, StatusCode::OK);
         assert!(dir.header("oc-fileid").starts_with("00000001"));
+    }
+
+    /// The filter-files REPORT reports the same getetag as PROPFIND and every other method.
+    #[tokio::test]
+    async fn filter_files_report_matches_propfind() {
+        let f = fixture().await;
+        let full = Some(f.full.as_str());
+        f.send("MKCOL", &format!("{FILES}/dir"), full, &[], "")
+            .await;
+        let put = f
+            .send("PUT", &format!("{FILES}/dir/fav.txt"), full, &[], "x")
+            .await;
+        f.send("PUT", &format!("{FILES}/plain.txt"), full, &[], "y")
+            .await;
+        let proppatch = r#"<?xml version="1.0"?><d:propertyupdate xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns"><d:set><d:prop><oc:favorite>1</oc:favorite></d:prop></d:set></d:propertyupdate>"#;
+        for path in ["dir", "dir/fav.txt"] {
+            let patched = f
+                .send(
+                    "PROPPATCH",
+                    &format!("{FILES}/{path}"),
+                    full,
+                    &[],
+                    proppatch,
+                )
+                .await;
+            assert_eq!(patched.status, StatusCode::MULTI_STATUS);
+        }
+        let report = r#"<?xml version="1.0"?><oc:filter-files xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns"><oc:filter-rules><oc:favorite>1</oc:favorite></oc:filter-rules><d:prop><d:getetag/><oc:favorite/><oc:fileid/><oc:missing/></d:prop></oc:filter-files>"#;
+        let reply = f.send("REPORT", FILES, full, &[], report).await;
+        assert_eq!(reply.status, StatusCode::MULTI_STATUS, "{}", reply.body);
+        assert!(
+            reply
+                .body
+                .contains("/remote.php/dav/files/alice/dir/</D:href>"),
+            "{}",
+            reply.body
+        );
+        assert!(
+            reply.body.contains("/dir/fav.txt</D:href>"),
+            "{}",
+            reply.body
+        );
+        assert!(!reply.body.contains("plain.txt"), "{}", reply.body);
+        assert!(
+            reply
+                .body
+                .contains(&format!("<D:getetag>{}</D:getetag>", put.header("etag"))),
+            "{}",
+            reply.body
+        );
+        assert!(
+            reply.body.contains("404 Not Found"),
+            "unknown props: {}",
+            reply.body
+        );
+        assert!(
+            xmltree_parses(&reply.body),
+            "the joined multistatus is well-formed: {}",
+            reply.body
+        );
+
+        let below = f
+            .send("REPORT", "/remote.php/webdav/dir", full, &[], report)
+            .await;
+        assert_eq!(below.status, StatusCode::MULTI_STATUS);
+        assert!(
+            below.body.contains("/remote.php/webdav/dir/fav.txt"),
+            "{}",
+            below.body
+        );
+        assert!(
+            !below.body.contains("dir/</D:href>"),
+            "the base is not listed: {}",
+            below.body
+        );
+
+        let tags = report.replace(
+            "<oc:favorite>1</oc:favorite>",
+            "<oc:systemtag>1</oc:systemtag>",
+        );
+        assert_eq!(
+            f.send("REPORT", FILES, full, &[], &tags).await.status,
+            StatusCode::NOT_IMPLEMENTED
+        );
+        let missing = f
+            .send("REPORT", &format!("{FILES}/nope"), full, &[], report)
+            .await;
+        assert_eq!(missing.status, StatusCode::NOT_FOUND);
+    }
+
+    fn xmltree_parses(xml: &str) -> bool {
+        // The acceptance suite parses with a full XML parser; a structural check is enough here.
+        xml.matches("<D:response>").count() == xml.matches("</D:response>").count()
+            && xml.trim_end().ends_with("</D:multistatus>")
     }
 
     #[tokio::test]

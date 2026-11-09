@@ -14,6 +14,7 @@
 //! - [`metadata`]: the `DavMetaData` wrapper that gives every entry a single ETag source.
 //! - [`props`]: Nextcloud live properties and permissions.
 //! - [`locks`]: the persistent `DavLockSystem`, keyed by storage path.
+//! - [`report`]: the `oc:filter-files` favorites REPORT, served next to dav-server.
 //! - [`oc_headers`]: the tower layer adding `OC-ETag`, `OC-FileId` and `X-NC-Permissions`.
 //!
 //! All metadata writes go through the `MetaStore` (see [`gono_core::meta`]).
@@ -26,6 +27,7 @@ pub mod locks;
 pub mod metadata;
 pub mod oc_headers;
 pub mod props;
+pub mod report;
 pub mod resolve;
 pub mod service;
 

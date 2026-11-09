@@ -240,6 +240,45 @@ impl MetaStore {
         Ok(rows.into_iter().map(FileRow::from).collect())
     }
 
+    /// The favorites strictly below `dir` (and `dir` itself when `include_dir` is set), ordered
+    /// by path. Served by the partial index `files_favorites`.
+    pub async fn favorites(
+        &self,
+        owner: i64,
+        dir: &RelPath,
+        include_dir: bool,
+    ) -> Result<Vec<FileRow>> {
+        let rows: Vec<Row> = match descendant_bounds(dir.as_str()) {
+            Some((lower, upper)) => {
+                let sql = format!(
+                    "SELECT {COLUMNS} FROM files WHERE owner_id = ?1 AND favorite = 1 \
+                     AND ((rel_path >= ?2 AND rel_path < ?3) OR (?4 AND rel_path = ?5)) \
+                     ORDER BY rel_path"
+                );
+                sqlx::query_as(sqlx::AssertSqlSafe(sql))
+                    .bind(owner)
+                    .bind(lower)
+                    .bind(upper)
+                    .bind(include_dir)
+                    .bind(dir.as_str())
+                    .fetch_all(&self.pool)
+                    .await?
+            }
+            None => {
+                let sql = format!(
+                    "SELECT {COLUMNS} FROM files WHERE owner_id = ?1 AND favorite = 1 \
+                     AND (rel_path <> '' OR ?2) ORDER BY rel_path"
+                );
+                sqlx::query_as(sqlx::AssertSqlSafe(sql))
+                    .bind(owner)
+                    .bind(include_dir)
+                    .fetch_all(&self.pool)
+                    .await?
+            }
+        };
+        Ok(rows.into_iter().map(FileRow::from).collect())
+    }
+
     /// All dead properties of an entry.
     pub async fn dead_props(&self, file_id: i64) -> Result<Vec<DeadProp>> {
         let rows: Vec<(String, String, Vec<u8>)> = sqlx::query_as(

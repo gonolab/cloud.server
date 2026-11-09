@@ -550,3 +550,62 @@ async fn webdav_alias_reaches_the_same_files() {
         .await;
     assert_eq!(response.status(), 200);
 }
+
+#[tokio::test]
+async fn favorites_are_found_through_the_mounts() {
+    let h = Harness::new().await;
+    let full = h.full();
+    for dir in ["media", "media/photos", "docs", "private"] {
+        h.mkcol(&full, dir).await.expect(201);
+    }
+    for file in ["media/photos/a.jpg", "docs/b.txt", "private/c.txt"] {
+        h.put(&full, file, "x").await.expect(201);
+    }
+    let favorite = r#"<?xml version="1.0"?><d:propertyupdate xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns"><d:set><d:prop><oc:favorite>1</oc:favorite></d:prop></d:set></d:propertyupdate>"#;
+    for path in [
+        "media/photos",
+        "media/photos/a.jpg",
+        "docs/b.txt",
+        "private/c.txt",
+    ] {
+        h.send(&full, "PROPPATCH", path, &[], favorite)
+            .await
+            .expect(207);
+    }
+
+    let scoped = h.identity(vec![
+        mount("/Docs", "/docs", true),
+        mount("/Pictures", "/media/photos", false),
+    ]);
+    let ctx = gono_dav::Ctx::new(
+        scoped.clone(),
+        gono_dav::RequestInfo::new(http::Method::GET),
+    );
+    let below = |rel: &str| {
+        let path = dav_server::davpath::DavPath::new(&Harness::url(rel)).unwrap();
+        let ctx = ctx.clone();
+        let fs = h.fs.clone();
+        async move {
+            fs.favorites_below(&ctx, &path).await.map(|found| {
+                found
+                    .into_iter()
+                    .map(|(client, dir)| {
+                        format!("{}{}", client.as_str(), if dir { "/" } else { "" })
+                    })
+                    .collect::<Vec<_>>()
+            })
+        }
+    };
+    // The virtual root searches every mount, including a favorite mount root.
+    assert_eq!(
+        below("").await.unwrap(),
+        ["Docs/b.txt", "Pictures/", "Pictures/a.jpg"],
+        "private/c.txt is outside the mounts"
+    );
+    assert_eq!(below("Pictures").await.unwrap(), ["Pictures/a.jpg"]);
+    assert_eq!(below("Docs/b.txt").await.unwrap(), Vec::<String>::new());
+    assert_eq!(
+        below("private").await,
+        Err(dav_server::fs::FsError::NotFound)
+    );
+}

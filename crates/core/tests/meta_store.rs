@@ -566,3 +566,55 @@ async fn changes_are_logged_in_the_same_transaction() {
     );
     assert!(f.store.subtree(f.owner, &p("d")).await.unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn favorites_are_listed_by_subtree() {
+    let f = fixture().await;
+    f.mkdir("a").await;
+    f.mkdir("a/b").await;
+    f.mkdir("a_").await;
+    for path in ["a/x.txt", "a/b/y.txt", "a_/z.txt", "top.txt"] {
+        f.write(path, 1).await;
+    }
+    for path in ["a", "a/b/y.txt", "a_/z.txt", "top.txt"] {
+        let id = f.store.get(f.owner, &p(path)).await.unwrap().unwrap().id;
+        f.store.set_favorite(id, true).await.unwrap();
+    }
+    let paths = |rows: Vec<gono_core::meta::FileRow>| -> Vec<String> {
+        rows.into_iter()
+            .map(|row| row.rel_path.as_str().to_owned())
+            .collect()
+    };
+
+    let below_a = f.store.favorites(f.owner, &p("a"), false).await.unwrap();
+    assert_eq!(paths(below_a), ["a/b/y.txt"], "no wildcard sibling a_");
+    let with_a = f.store.favorites(f.owner, &p("a"), true).await.unwrap();
+    assert_eq!(paths(with_a), ["a", "a/b/y.txt"]);
+    let everything = f
+        .store
+        .favorites(f.owner, &RelPath::root(), false)
+        .await
+        .unwrap();
+    assert_eq!(paths(everything), ["a", "a/b/y.txt", "a_/z.txt", "top.txt"]);
+
+    let root = f
+        .store
+        .get(f.owner, &RelPath::root())
+        .await
+        .unwrap()
+        .unwrap();
+    f.store.set_favorite(root.id, true).await.unwrap();
+    let root_only = |rows: Vec<gono_core::meta::FileRow>| rows.iter().any(|r| r.rel_path.is_root());
+    assert!(!root_only(
+        f.store
+            .favorites(f.owner, &RelPath::root(), false)
+            .await
+            .unwrap()
+    ));
+    assert!(root_only(
+        f.store
+            .favorites(f.owner, &RelPath::root(), true)
+            .await
+            .unwrap()
+    ));
+}

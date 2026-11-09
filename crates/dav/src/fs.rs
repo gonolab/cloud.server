@@ -378,6 +378,49 @@ impl ScopedFs {
         Ok(entries)
     }
 
+    /// The favorites strictly below `path`, as client paths with whether each one is a
+    /// collection, ordered by client path (the `filter-files` REPORT).
+    ///
+    /// Below a virtual collection, every mount is searched, including the mount roots. The
+    /// result comes from the metadata alone; callers look every entry up again, which drops
+    /// rows whose file disappeared behind the server's back.
+    pub async fn favorites_below(
+        &self,
+        ctx: &Ctx,
+        path: &DavPath,
+    ) -> FsResult<Vec<(RelPath, bool)>> {
+        let identity = ctx.identity();
+        let location = resolve::resolve(identity, path)?;
+        // 404 for a path that does not exist.
+        self.lookup(ctx, &location).await?;
+        let owner = identity.user_id;
+        let searches: Vec<(usize, &RelPath, bool)> = match &location {
+            Location::Storage { mount, storage, .. } => vec![(*mount, storage, false)],
+            Location::Virtual { client } => identity
+                .mounts
+                .iter()
+                .enumerate()
+                .filter(|(_, mount)| mount.mount_path.starts_with(client))
+                .map(|(index, mount)| (index, &mount.storage_path, true))
+                .collect(),
+        };
+        let mut found = Vec::new();
+        for (mount, dir, include_dir) in searches {
+            let rows = self
+                .inner
+                .meta
+                .favorites(owner, dir, include_dir)
+                .await
+                .map_err(db_error)?;
+            found.extend(rows.into_iter().filter_map(|row| {
+                resolve::client_for_storage(identity, mount, &row.rel_path)
+                    .map(|client| (client, row.is_dir))
+            }));
+        }
+        found.sort();
+        Ok(found)
+    }
+
     async fn list_virtual(
         &self,
         ctx: &Ctx,

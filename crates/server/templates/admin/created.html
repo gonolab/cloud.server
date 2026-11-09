@@ -1,0 +1,18 @@
+{%- extends "admin/frame.html" -%}
+{%- block title %}App password created{% endblock -%}
+{%- block content %}
+<div class="crumbs"><a href="{{ frame.prefix }}/users">Users</a> / <a href="{{ frame.prefix }}/users/{{ username }}">{{ username }}</a> / New app password</div>
+<div class="panel narrow"><div class="panel-body">
+  <h1>App password created</h1>
+  <p class="muted mt-6">Enter it on the device now. It is not stored in readable form and will not be shown again.</p>
+  <div class="secret">{{ token }}</div>
+  <dl class="facts mt-18">
+    <dt>User</dt><dd class="mono">{{ username }}</dd>
+    <dt>Label</dt><dd>{{ label }}</dd>
+    <dt>Access</dt><dd><div class="chips">{% for scope in scopes %}<span class="chip">{{ scope.mount }} → {{ scope.storage }} <span class="perm">{{ scope.permission }}</span></span>{% endfor %}</div></dd>
+    <dt>Expires</dt><dd>{{ expiry }}</dd>
+    <dt>Server</dt><dd class="mono">{{ server }}</dd>
+  </dl>
+  <div class="actions mt-20"><a class="btn primary" href="{{ frame.prefix }}/users/{{ username }}">Done</a></div>
+</div></div>
+{%- endblock %}

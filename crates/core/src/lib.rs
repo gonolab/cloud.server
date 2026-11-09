@@ -15,6 +15,7 @@
 //! - [`login_flows`]: pending Login Flow v2 sign-ins.
 //! - [`web_sessions`]: browser sessions of the server's HTML pages.
 //! - [`secret`]: random tokens and their digests.
+//! - [`stats`]: counts shown on the web admin UI.
 //! - [`error`]: the domain error types.
 
 pub mod app_passwords;
@@ -28,6 +29,7 @@ pub mod password;
 pub mod path;
 pub mod secret;
 pub mod settings;
+pub mod stats;
 pub mod storage;
 pub mod types;
 pub mod uploads;

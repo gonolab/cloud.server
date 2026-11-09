@@ -211,6 +211,17 @@ impl Hub {
             .map_or(0, |channel| channel.connections)
     }
 
+    /// Open connections and the number of users they belong to.
+    pub fn connection_stats(&self) -> (usize, usize) {
+        let routes = lock(&self.routes);
+        let connections = routes
+            .users
+            .values()
+            .map(|channel| channel.connections)
+            .sum();
+        (connections, routes.users.len())
+    }
+
     fn unsubscribe(&self, user_id: i64) {
         let mut routes = lock(&self.routes);
         if let Some(channel) = routes.users.get_mut(&user_id) {
@@ -454,8 +465,10 @@ mod tests {
             hub.subscribe(1).unwrap_err(),
             SubscribeError::TooManyConnections
         );
-        assert!(hub.subscribe(2).is_ok(), "the limit is per user");
+        let other = hub.subscribe(2).unwrap();
         assert_eq!(hub.connections(1), 2);
+        assert_eq!(hub.connection_stats(), (3, 2));
+        drop(other);
         drop(first);
         assert_eq!(hub.connections(1), 1);
         let third = hub.subscribe(1).unwrap();

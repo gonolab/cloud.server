@@ -1,0 +1,9 @@
+{%- extends "admin/frame.html" -%}
+{%- block title %}{{ heading }}{% endblock -%}
+{%- block content %}
+<div class="panel narrow"><div class="panel-body">
+  <h1>{{ heading }}</h1>
+  <p class="muted mt-6">{{ lead }}</p>
+  <div class="actions mt-20"><a class="btn primary" href="{{ link_href }}">{{ link_label }}</a></div>
+</div></div>
+{%- endblock %}

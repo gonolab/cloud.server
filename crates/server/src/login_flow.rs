@@ -15,6 +15,7 @@
 
 use std::net::SocketAddr;
 
+use askama::Template;
 use axum::{
     Form,
     extract::{ConnectInfo, Path, State},
@@ -29,7 +30,7 @@ use serde::Deserialize;
 use crate::{
     app::AppState,
     client_ip::client_ip,
-    web::{self, CSRF_COOKIE, SESSION_COOKIE, SignIn, escape},
+    web::{self, CSRF_COOKIE, Message, SESSION_COOKIE, SignIn},
 };
 
 fn json(status: StatusCode, value: &serde_json::Value) -> Response {
@@ -152,26 +153,47 @@ pub struct PageForm {
     password: String,
 }
 
+/// The sign-in form (`templates/login_flow/sign_in.html`).
+#[derive(Template)]
+#[template(path = "login_flow/sign_in.html")]
+struct SignInPage<'a> {
+    client: &'a str,
+    csrf: &'a str,
+    error: Option<&'a str>,
+}
+
+/// The consent page (`templates/login_flow/consent.html`).
+#[derive(Template)]
+#[template(path = "login_flow/consent.html")]
+struct ConsentPage<'a> {
+    client: &'a str,
+    account: String,
+    csrf: &'a str,
+}
+
 fn expired_page() -> Response {
-    web::page(
-        StatusCode::NOT_FOUND,
+    Message::new(
         "Link expired",
-        "<h1>This link has expired</h1>\n<p>The sign-in request was already used, cancelled \
-         or is too old. Start the sign-in again in your app.</p>",
+        "This link has expired",
+        "The sign-in request was already used, cancelled or is too old. Start the sign-in \
+         again in your app.",
     )
+    .respond(StatusCode::NOT_FOUND)
 }
 
 fn done_page(client: &str) -> Response {
-    web::page(
-        StatusCode::OK,
+    let mut page = Message::new(
         "Access granted",
-        &format!(
-            "<h1>Access granted</h1>\n<p><span class=\"client\">{}</span> is now connected to \
-             your account.</p>\n<p class=\"muted\">You can close this window and return to the \
-             app.</p>",
-            escape(client)
-        ),
-    )
+        "Access granted",
+        "is now connected to your account.",
+    );
+    page.client = Some(client.to_owned());
+    page.note = Some("You can close this window and return to the app.".to_owned());
+    page.respond(StatusCode::OK)
+}
+
+fn blocked_page(lead: &str) -> Response {
+    Message::new("Request blocked", "Request blocked", lead).respond(StatusCode::FORBIDDEN)
 }
 
 fn login_page(
@@ -182,27 +204,12 @@ fn login_page(
     message: Option<&str>,
 ) -> Response {
     let (csrf, cookie) = state.web.login_csrf(headers);
-    let message = message
-        .map(|text| format!("<p class=\"error\" role=\"alert\">{}</p>\n", escape(text)))
-        .unwrap_or_default();
-    let mut response = web::page(
-        status,
-        "Connect a device",
-        &format!(
-            "<h1>Connect a device</h1>\n<p><span class=\"client\">{client}</span> wants to \
-             access your account. Sign in to continue; you will be asked to confirm.</p>\n\
-             {message}<form method=\"post\" action=\"\">\n\
-             <input type=\"hidden\" name=\"csrf\" value=\"{csrf}\">\n\
-             <input type=\"hidden\" name=\"action\" value=\"login\">\n\
-             <label>Username<input type=\"text\" name=\"user\" autocomplete=\"username\" \
-             autocapitalize=\"none\" spellcheck=\"false\" required autofocus></label>\n\
-             <label>Password<input type=\"password\" name=\"password\" \
-             autocomplete=\"current-password\" required></label>\n\
-             <div class=\"actions\"><button type=\"submit\">Log in</button></div>\n</form>",
-            client = escape(client),
-            csrf = escape(&csrf),
-        ),
-    );
+    let page = SignInPage {
+        client,
+        csrf: &csrf,
+        error: message,
+    };
+    let mut response = web::render(status, &page);
     response.headers_mut().append(header::SET_COOKIE, cookie);
     response
 }
@@ -213,37 +220,19 @@ fn consent_page(
     session: &(gono_core::web_sessions::SessionUser, String),
 ) -> Response {
     let (user, token) = session;
-    let csrf = escape(&state.web.session_csrf(token));
     let account = if user.display_name == user.username.as_str() {
-        escape(&user.display_name)
+        user.display_name.clone()
     } else {
-        format!(
-            "{} ({})",
-            escape(&user.display_name),
-            escape(user.username.as_str())
-        )
+        format!("{} ({})", user.display_name, user.username)
     };
-    web::page(
+    let csrf = state.web.session_csrf(token);
+    web::render(
         StatusCode::OK,
-        "Grant access",
-        &format!(
-            "<h1>Grant access?</h1>\n<p><span class=\"client\">{client}</span> asks for access \
-             to your account <strong>{account}</strong>.</p>\n<p class=\"muted\">If you grant \
-             access, this device gets its own app password with access to all your files. You \
-             can revoke it at any time. Only continue if you just started this sign-in in the \
-             app.</p>\n<div class=\"actions\">\n\
-             <form method=\"post\" action=\"\"><input type=\"hidden\" name=\"csrf\" \
-             value=\"{csrf}\"><button type=\"submit\" name=\"action\" value=\"grant\">Grant \
-             access</button></form>\n\
-             <form method=\"post\" action=\"\"><input type=\"hidden\" name=\"csrf\" \
-             value=\"{csrf}\"><button type=\"submit\" name=\"action\" value=\"deny\" \
-             class=\"secondary\">Cancel</button></form>\n</div>\n\
-             <form method=\"post\" action=\"\" class=\"actions\"><input type=\"hidden\" \
-             name=\"csrf\" value=\"{csrf}\"><span class=\"muted\">Not \
-             {account}?</span><button type=\"submit\" name=\"action\" value=\"logout\" \
-             class=\"link\">Log out</button></form>",
-            client = escape(client),
-        ),
+        &ConsentPage {
+            client,
+            account,
+            csrf: &csrf,
+        },
     )
 }
 
@@ -295,11 +284,7 @@ pub async fn submit(
     Form(form): Form<PageForm>,
 ) -> Response {
     if !state.web.same_origin(&headers) {
-        return web::page(
-            StatusCode::FORBIDDEN,
-            "Request blocked",
-            "<h1>Request blocked</h1>\n<p>This form was sent from another site.</p>",
-        );
+        return blocked_page("This form was sent from another site.");
     }
     let flow = match login_flows::find(&state.db, &token, db::unix_now()).await {
         Ok(Some(flow)) => flow,
@@ -338,15 +323,7 @@ pub async fn submit(
                 Some("Wrong username or password."),
             ),
             SignIn::RateLimited(wait) => {
-                let mut response = web::page(
-                    StatusCode::TOO_MANY_REQUESTS,
-                    "Too many attempts",
-                    &format!(
-                        "<h1>Too many attempts</h1>\n<p>There were too many failed sign-ins from \
-                         your network. Try again in {} seconds.</p>",
-                        wait.as_secs().max(1)
-                    ),
-                );
+                let mut response = web::too_many_attempts(wait);
                 retry_after(&mut response, wait.as_secs());
                 response
             }
@@ -363,12 +340,7 @@ pub async fn submit(
         );
     };
     if !state.web.check_session_csrf(&session.1, &form.csrf) {
-        return web::page(
-            StatusCode::FORBIDDEN,
-            "Request blocked",
-            "<h1>Request blocked</h1>\n<p>The form has expired. Reload the page and try \
-             again.</p>",
-        );
+        return blocked_page("The form has expired. Reload the page and try again.");
     }
     if flow.granted_user_id.is_some() {
         return done_page(&flow.client_name);
@@ -396,25 +368,20 @@ pub async fn submit(
                 tracing::error!(error = %err, "cannot cancel a Login Flow v2 sign-in");
             }
             tracing::info!(%client, user = %user.username, "Login Flow v2 access denied");
-            web::page(
-                StatusCode::OK,
+            let mut page = Message::new(
                 "Access denied",
-                &format!(
-                    "<h1>Access denied</h1>\n<p><span class=\"client\">{}</span> did not get \
-                     access to your account.</p>\n<p class=\"muted\">You can close this \
-                     window.</p>",
-                    escape(&flow.client_name)
-                ),
-            )
+                "Access denied",
+                "did not get access to your account.",
+            );
+            page.client = Some(flow.client_name.clone());
+            page.note = Some("You can close this window.".to_owned());
+            page.respond(StatusCode::OK)
         }
         "logout" => {
             state.web.sign_out(&session.1).await;
             back_to(&uri, &[state.web.removal_cookie(SESSION_COOKIE)])
         }
-        _ => web::page(
-            StatusCode::BAD_REQUEST,
-            "Bad request",
-            "<h1>Bad request</h1>\n<p>Unknown action.</p>",
-        ),
+        _ => Message::new("Bad request", "Bad request", "Unknown action.")
+            .respond(StatusCode::BAD_REQUEST),
     }
 }

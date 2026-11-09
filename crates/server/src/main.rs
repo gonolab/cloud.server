@@ -1,5 +1,6 @@
 //! `gono-cloud`: command line entry point of Gono Cloud.
 
+mod admin;
 mod app;
 mod auth;
 mod cli;

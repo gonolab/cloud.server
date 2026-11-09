@@ -1,6 +1,8 @@
-//! Building blocks of the server's HTML pages: the Login Flow v2 pages now, the web admin UI
-//! later.
+//! Building blocks of the server's HTML pages: the Login Flow v2 pages and the web admin UI.
 //!
+//! - **Pages** are askama templates (`crates/server/templates/`), rendered with [`render`].
+//!   Every value is HTML-escaped by the template engine; the one stylesheet
+//!   (`crates/server/assets/web.css`) is embedded in every page.
 //! - **Sign-in** ([`Web::sign_in`]) with the web login password (Argon2), behind the same
 //!   per-client [`RateLimiter`] as device authentication: checked before anything is
 //!   verified, one token per failure. Unknown accounts cost the same Argon2 work as known
@@ -15,7 +17,9 @@
 //!   `Sec-Fetch-Site` header that names another site are refused as well.
 //! - **Headers** ([`page`]): a strict Content Security Policy (no scripts, only the page's own
 //!   stylesheet by hash, forms only to this origin, no framing), `X-Frame-Options: DENY`,
-//!   `Referrer-Policy: no-referrer` (page URLs can carry tokens), `Cache-Control: no-store`.
+//!   `Referrer-Policy: same-origin` (page URLs can carry tokens, so no other site ever sees
+//!   them; `no-referrer` would also make browsers send `Origin: null` with our own forms),
+//!   `Cache-Control: no-store`.
 
 use std::{
     net::IpAddr,
@@ -23,13 +27,15 @@ use std::{
     time::Duration,
 };
 
+use askama::Template;
 use axum::{
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use gono_core::{
-    PRODUCT_NAME, Username, db, password, secret, users,
+    Username, db, password, secret,
+    users::{self, User},
     web_sessions::{self, SessionUser},
 };
 use secrecy::{ExposeSecret as _, SecretString};
@@ -46,6 +52,17 @@ pub const CSRF_COOKIE: &str = "gono_csrf";
 
 /// Length of the pre-sign-in CSRF token.
 const CSRF_CHARS: usize = 43;
+
+/// Outcome of [`Web::verify_password`].
+#[derive(Debug)]
+pub enum Verified {
+    /// The password is right and the account is enabled.
+    Ok(User),
+    /// Unknown account, wrong password or disabled account.
+    Invalid,
+    /// Too many failures from this client; retry after the given time.
+    RateLimited(Duration),
+}
 
 /// Outcome of [`Web::sign_in`].
 #[derive(Debug)]
@@ -164,17 +181,22 @@ impl Web {
         }
     }
 
-    /// Checks a web login password and opens a session (see the module documentation).
-    pub async fn sign_in(&self, client: IpAddr, username: &str, password: SecretString) -> SignIn {
+    /// Checks a web login password (see the module documentation) without opening a session.
+    pub async fn verify_password(
+        &self,
+        client: IpAddr,
+        username: &str,
+        password: SecretString,
+    ) -> Verified {
         if let Some(wait) = self.limiter.check(client) {
-            return SignIn::RateLimited(wait);
+            return Verified::RateLimited(wait);
         }
         let account = match Username::new(username.trim()) {
             Ok(name) => match users::credentials(&self.pool, &name).await {
                 Ok(account) => account,
                 Err(err) => {
                     tracing::error!(error = %err, "sign-in lookup failed");
-                    return SignIn::Invalid;
+                    return Verified::Invalid;
                 }
             },
             Err(_) => None,
@@ -188,23 +210,38 @@ impl Web {
             .and_then(Result::ok)
             .unwrap_or(false);
         match account {
-            Some((user, _)) if verified && user.enabled => {
-                match web_sessions::create(&self.pool, user.id, db::unix_now()).await {
-                    Ok(token) => {
-                        tracing::info!(%client, user = %user.username, "web sign-in");
-                        SignIn::Ok(token)
-                    }
-                    Err(err) => {
-                        tracing::error!(error = %err, "cannot create a session");
-                        SignIn::Invalid
-                    }
-                }
-            }
+            Some((user, _)) if verified && user.enabled => Verified::Ok(user),
             _ => {
                 self.limiter.record_failure(client);
                 tracing::info!(%client, user = %username.trim(), "rejected web sign-in");
-                SignIn::Invalid
+                Verified::Invalid
             }
+        }
+    }
+
+    /// Opens a session for an account whose password was verified; returns the cookie token.
+    pub async fn open_session(&self, client: IpAddr, user: &User) -> Option<SecretString> {
+        match web_sessions::create(&self.pool, user.id, db::unix_now()).await {
+            Ok(token) => {
+                tracing::info!(%client, user = %user.username, "web sign-in");
+                Some(token)
+            }
+            Err(err) => {
+                tracing::error!(error = %err, "cannot create a session");
+                None
+            }
+        }
+    }
+
+    /// Checks a web login password and opens a session (see the module documentation).
+    pub async fn sign_in(&self, client: IpAddr, username: &str, password: SecretString) -> SignIn {
+        match self.verify_password(client, username, password).await {
+            Verified::Ok(user) => match self.open_session(client, &user).await {
+                Some(token) => SignIn::Ok(token),
+                None => SignIn::Invalid,
+            },
+            Verified::Invalid => SignIn::Invalid,
+            Verified::RateLimited(wait) => SignIn::RateLimited(wait),
         }
     }
 
@@ -248,60 +285,28 @@ impl Web {
 }
 
 /// See [`Web::same_origin`]; `origin` is `scheme://host[:port]`.
+///
+/// Browsers send `Origin: null` instead of the origin when the page's referrer policy or a
+/// privacy setting hides it; that is accepted only together with `Sec-Fetch-Site:
+/// same-origin`, which pages cannot forge.
 fn same_origin(origin: &str, headers: &HeaderMap) -> bool {
-    let origin_ok = headers
+    let fetch_site = headers
+        .get("sec-fetch-site")
+        .and_then(|value| value.to_str().ok());
+    let origin_ok = match headers
         .get(header::ORIGIN)
         .and_then(|value| value.to_str().ok())
-        .is_none_or(|value| value == origin);
-    let fetch_ok = headers
-        .get("sec-fetch-site")
-        .and_then(|value| value.to_str().ok())
-        .is_none_or(|site| matches!(site, "same-origin" | "none"));
+    {
+        None => true,
+        Some("null") => fetch_site == Some("same-origin"),
+        Some(value) => value == origin,
+    };
+    let fetch_ok = fetch_site.is_none_or(|site| matches!(site, "same-origin" | "none"));
     origin_ok && fetch_ok
 }
 
-/// Escapes text for HTML element content and attribute values.
-pub fn escape(text: &str) -> String {
-    let mut escaped = String::with_capacity(text.len());
-    for c in text.chars() {
-        match c {
-            '&' => escaped.push_str("&amp;"),
-            '<' => escaped.push_str("&lt;"),
-            '>' => escaped.push_str("&gt;"),
-            '"' => escaped.push_str("&quot;"),
-            '\'' => escaped.push_str("&#39;"),
-            c => escaped.push(c),
-        }
-    }
-    escaped
-}
-
 /// The stylesheet of every page. The CSP allows exactly this text (by hash).
-const STYLE: &str = "\
-:root{color-scheme:light dark;--bg:#f4f5f7;--card:#fff;--text:#1d2125;--muted:#5c6670;\
---line:#d5d9de;--accent:#2457c5;--accent-text:#fff;--error:#b42318}\
-@media (prefers-color-scheme:dark){:root{--bg:#16181b;--card:#202327;--text:#e8eaed;\
---muted:#a3aab2;--line:#3a3f45;--accent:#7aa2ff;--accent-text:#0d1117;--error:#ff8a80}}\
-*{box-sizing:border-box}\
-body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;\
-padding:16px;background:var(--bg);color:var(--text);\
-font:16px/1.5 system-ui,-apple-system,\"Segoe UI\",Roboto,sans-serif}\
-main{width:100%;max-width:26rem;background:var(--card);border:1px solid var(--line);\
-border-radius:12px;padding:28px}\
-.product{margin:0 0 4px;color:var(--muted);font-size:.875rem;letter-spacing:.02em}\
-h1{margin:0 0 16px;font-size:1.375rem;line-height:1.3}\
-p{margin:0 0 12px}.muted{color:var(--muted);font-size:.9375rem}\
-.error{color:var(--error);font-weight:600}\
-label{display:block;margin:0 0 12px;font-weight:600;font-size:.9375rem}\
-input[type=text],input[type=password]{display:block;width:100%;margin-top:4px;padding:10px 12px;\
-border:1px solid var(--line);border-radius:8px;background:transparent;color:inherit;font:inherit}\
-form{margin:0}.actions{display:flex;gap:8px;margin-top:20px;flex-wrap:wrap}\
-button{flex:1;min-width:8rem;padding:10px 16px;border-radius:8px;border:1px solid var(--accent);\
-background:var(--accent);color:var(--accent-text);font:inherit;font-weight:600;cursor:pointer}\
-button.secondary{background:transparent;color:var(--text);border-color:var(--line)}\
-button.link{flex:none;min-width:0;padding:0;border:0;background:none;color:var(--accent);\
-font-weight:400;text-decoration:underline}\
-.client{font-weight:700;overflow-wrap:anywhere}";
+pub const STYLE: &str = include_str!("../assets/web.css");
 
 /// The `Content-Security-Policy` of every page.
 fn content_security_policy() -> &'static str {
@@ -329,21 +334,19 @@ pub fn secure_headers(headers: &mut HeaderMap) {
     );
     set(headers, "x-frame-options", "DENY");
     set(headers, "x-content-type-options", "nosniff");
-    set(headers, "referrer-policy", "no-referrer");
+    set(headers, "referrer-policy", "same-origin");
     set(headers, "cache-control", "no-store");
 }
 
-/// An HTML page: `body` (trusted HTML) inside the common layout, with the security headers.
-pub fn page(status: StatusCode, title: &str, body: &str) -> Response {
-    let html = format!(
-        "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n\
-         <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
-         <meta name=\"referrer\" content=\"no-referrer\">\n<title>{title} – {product}</title>\n\
-         <style>{STYLE}</style>\n</head>\n<body>\n<main>\n<p class=\"product\">{product}</p>\n\
-         {body}\n</main>\n</body>\n</html>\n",
-        title = escape(title),
-        product = escape(PRODUCT_NAME),
-    );
+/// Renders a page template with the security headers.
+pub fn render(status: StatusCode, page: &impl Template) -> Response {
+    let html = match page.render() {
+        Ok(html) => html,
+        Err(err) => {
+            tracing::error!(error = %err, "cannot render a page");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
     let mut response = (status, html).into_response();
     response.headers_mut().insert(
         header::CONTENT_TYPE,
@@ -351,6 +354,65 @@ pub fn page(status: StatusCode, title: &str, body: &str) -> Response {
     );
     secure_headers(response.headers_mut());
     response
+}
+
+/// The page shown while a client is blocked by the failed-attempt limiter.
+pub fn too_many_attempts(wait: Duration) -> Response {
+    Message::new(
+        "Too many attempts",
+        "Too many attempts",
+        &format!(
+            "There were too many failed sign-ins from your network. Try again in {} seconds.",
+            wait.as_secs().max(1)
+        ),
+    )
+    .respond(StatusCode::TOO_MANY_REQUESTS)
+}
+
+/// A page with a heading and a short text (`templates/message.html`).
+#[derive(Debug, Clone, Default, Template)]
+#[template(path = "message.html")]
+pub struct Message {
+    /// Window title.
+    pub title: String,
+    /// Heading.
+    pub heading: String,
+    /// A client (device) name shown before `lead`.
+    pub client: Option<String>,
+    /// The text.
+    pub lead: String,
+    /// A second, smaller text.
+    pub note: Option<String>,
+    /// A button: link target and label.
+    pub link: Option<(String, String)>,
+}
+
+impl Message {
+    /// A message page with a heading and a text.
+    pub fn new(title: &str, heading: &str, lead: &str) -> Self {
+        Self {
+            title: title.to_owned(),
+            heading: heading.to_owned(),
+            lead: lead.to_owned(),
+            ..Self::default()
+        }
+    }
+
+    /// Renders the page with `status`.
+    pub fn respond(&self, status: StatusCode) -> Response {
+        render(status, self)
+    }
+}
+
+/// The ids of every `id="..."` attribute in `html`, for tests that check uniqueness.
+#[cfg(test)]
+pub fn element_ids(html: &str) -> Vec<String> {
+    html.match_indices(" id=\"")
+        .filter_map(|(index, needle)| {
+            let rest = &html[index + needle.len()..];
+            rest.find('"').map(|end| rest[..end].to_owned())
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -380,14 +442,14 @@ mod tests {
 
     #[test]
     fn pages_carry_the_security_headers() {
-        let response = page(StatusCode::OK, "T<", "<p>x</p>");
+        let response = Message::new("T<", "<b>", "x").respond(StatusCode::OK);
         let headers = response.headers();
         let csp = headers["content-security-policy"].to_str().unwrap();
         assert!(csp.contains("default-src 'none'"), "{csp}");
         assert!(csp.contains("frame-ancestors 'none'"), "{csp}");
         assert!(!csp.contains("unsafe-inline"), "{csp}");
         assert_eq!(headers["x-frame-options"], "DENY");
-        assert_eq!(headers["referrer-policy"], "no-referrer");
+        assert_eq!(headers["referrer-policy"], "same-origin");
         assert_eq!(headers["cache-control"], "no-store");
         assert!(
             headers["content-type"]
@@ -395,7 +457,26 @@ mod tests {
                 .unwrap()
                 .starts_with("text/html")
         );
-        assert_eq!(escape("<a href='x'>&"), "&lt;a href=&#39;x&#39;&gt;&amp;");
+    }
+
+    #[tokio::test]
+    async fn templates_escape_values_and_embed_the_hashed_stylesheet() {
+        let mut message = Message::new("T", "<script>alert(1)</script>", "a & b");
+        message.client = Some("\"evil\" <img>".into());
+        let html = message.render().unwrap();
+        assert!(!html.contains("<script>"), "{html}");
+        assert!(html.contains("&#60;script&#62;"), "{html}");
+        assert!(!html.contains("\"evil\""), "{html}");
+        assert!(!html.contains("<img>"), "{html}");
+        let style = format!("<style>{STYLE}</style>");
+        assert!(
+            html.contains(&style),
+            "the stylesheet must be embedded verbatim"
+        );
+        assert!(
+            !STYLE.contains("</style"),
+            "the stylesheet must not end the element"
+        );
     }
 
     #[test]
@@ -424,6 +505,16 @@ mod tests {
         assert!(!same_origin(
             origin,
             &headers(&[("sec-fetch-site", "same-site")])
+        ));
+        // A hidden origin counts only with the browser's own same-origin statement.
+        assert!(same_origin(
+            origin,
+            &headers(&[("origin", "null"), ("sec-fetch-site", "same-origin")])
+        ));
+        assert!(!same_origin(origin, &headers(&[("origin", "null")])));
+        assert!(!same_origin(
+            origin,
+            &headers(&[("origin", "null"), ("sec-fetch-site", "cross-site")])
         ));
     }
 }

@@ -1,0 +1,101 @@
+{%- extends "admin/frame.html" -%}
+{%- block title %}{{ user.username }}{% endblock -%}
+{%- block content %}
+<div class="crumbs"><a href="{{ frame.prefix }}/users">Users</a> / {{ user.username }}</div>
+{%- if let Some(notice) = notice %}
+<div class="flash ok" role="status">{{ notice }}</div>
+{%- endif %}
+{%- if let Some(error) = error %}
+<div class="flash bad" role="alert">{{ error }}</div>
+{%- endif %}
+<div class="page-head">
+  <div><h1>{{ user.display_name }}</h1>
+    <p class="sub"><span class="mono">{{ user.username }}</span> &nbsp;{% if user.is_admin %}<span class="badge">Admin</span>{% else %}<span class="badge off">User</span>{% endif %} {% if user.enabled %}<span class="badge ok dot">Enabled</span>{% else %}<span class="badge off dot">Disabled</span>{% endif %}</p></div>
+  <div class="head-actions">
+    {%- if is_self %}
+    <span class="muted small">This is your account.</span>
+    {%- else if user.enabled %}
+    <form method="post" action="{{ base }}/disable"><input type="hidden" name="csrf" value="{{ frame.csrf }}"><button class="btn" type="submit">Disable account</button></form>
+    {%- else %}
+    <form method="post" action="{{ base }}/enable"><input type="hidden" name="csrf" value="{{ frame.csrf }}"><button class="btn primary" type="submit">Enable account</button></form>
+    {%- endif %}
+  </div>
+</div>
+<div class="grid">
+  <div class="stack">
+    <div class="panel">
+      <div class="panel-head"><div><h2>App passwords</h2><p class="muted small">One per device. Revoking signs that device out at once.</p></div></div>
+      {%- if app_passwords.is_empty() %}
+      <div class="empty">No app passwords yet. Devices get one through Login Flow, or create one below.</div>
+      {%- else %}
+      <div class="table-wrap"><table>
+        <thead><tr><th>Label</th><th>Access</th><th>Last used</th><th class="end"></th></tr></thead>
+        <tbody>
+        {%- for password in app_passwords %}
+          <tr><td><b>{{ password.label }}</b><div class="muted small nowrap">Created {{ password.created }}</div></td>
+            <td><div class="chips">{% for scope in password.scopes %}<span class="chip">{{ scope.mount }} → {{ scope.storage }} <span class="perm">{{ scope.permission }}</span></span>{% endfor %}</div></td>
+            <td class="num">{{ password.last_used }}<div class="muted small">{{ password.expiry }}</div></td>
+            <td class="end"><form method="post" action="{{ base }}/app-passwords/{{ password.id }}/delete"><input type="hidden" name="csrf" value="{{ frame.csrf }}"><button class="btn danger sm" type="submit">Revoke</button></form></td></tr>
+        {%- endfor %}
+        </tbody>
+      </table></div>
+      {%- endif %}
+    </div>
+    <div class="panel">
+      <div class="panel-head"><div><h2>New app password</h2><p class="muted small">Shown once after it is created.</p></div></div>
+      <div class="panel-body">
+        <form method="post" action="{{ base }}/app-passwords">
+          <input type="hidden" name="csrf" value="{{ frame.csrf }}">
+          <div class="row">
+            <label class="field" for="ap-label"><span>Label</span><input id="ap-label" type="text" name="label" value="{{ form.label }}" required placeholder="Work laptop"></label>
+            <label class="field" for="ap-expires"><span>Expires after (days)</span><input id="ap-expires" type="number" name="expires_in_days" value="{{ form.expires_in_days }}" min="1" max="3650" placeholder="Never"></label>
+          </div>
+          <fieldset class="scope"><legend>Access</legend>
+            <div class="choices">
+              <label class="choice" for="scope-full"><input id="scope-full" type="radio" name="access" value="full"{% if form.access == "full" %} checked{% endif %}><span><b>All files, read and write</b><span>Mounts <code>/</code> with full access.</span></span></label>
+              <label class="choice" for="scope-view"><input id="scope-view" type="radio" name="access" value="view"{% if form.access == "view" %} checked{% endif %}><span><b>All files, read only</b><span>Mounts <code>/</code> with view access.</span></span></label>
+              <label class="choice" for="scope-custom"><input id="scope-custom" type="radio" name="access" value="custom"{% if form.access == "custom" %} checked{% endif %}><span><b>Selected folders</b><span>Up to three mounts; empty rows are ignored.</span></span></label>
+            </div>
+            <div class="mounts">
+              <div class="mount-head"><span>Shown to the device as</span><span>Folder in the user's files</span><span>Access</span></div>
+              {%- for mount in form.mounts %}
+              <div class="mount-row">
+                <input id="mount-{{ loop.index }}" class="mono-input" type="text" name="mount_{{ loop.index }}" value="{{ mount.mount }}" placeholder="/Photos" aria-label="Mount path {{ loop.index }}">
+                <input id="storage-{{ loop.index }}" class="mono-input" type="text" name="storage_{{ loop.index }}" value="{{ mount.storage }}" placeholder="/Media/Photos" aria-label="Storage path {{ loop.index }}">
+                <select id="perm-{{ loop.index }}" name="perm_{{ loop.index }}" aria-label="Access {{ loop.index }}"><option value="view"{% if mount.permission != "full" %} selected{% endif %}>view</option><option value="full"{% if mount.permission == "full" %} selected{% endif %}>full</option></select>
+              </div>
+              {%- endfor %}
+            </div>
+          </fieldset>
+          <button class="btn primary" type="submit">Create app password</button>
+        </form>
+      </div>
+    </div>
+  </div>
+  <div class="stack">
+    <div class="panel"><div class="panel-body">
+      <h2>Account</h2>
+      <dl class="facts mt-18"><dt>User id</dt><dd class="mono">{{ user.id }}</dd><dt>Created</dt><dd>{{ user.created }}</dd><dt>Changed</dt><dd>{{ user.updated }}</dd><dt>Storage used</dt><dd>{{ user.storage }}</dd></dl>
+    </div></div>
+    <div class="panel"><div class="panel-body">
+      <h2>Web login password</h2>
+      <p class="muted small">Used for Login Flow and this admin UI. Setting it signs the user out of open browser sessions.</p>
+      <form method="post" action="{{ base }}/password">
+        <input type="hidden" name="csrf" value="{{ frame.csrf }}">
+        <label class="field" for="pw-new"><span>New password</span><input id="pw-new" type="password" name="password" autocomplete="new-password" required minlength="8"></label>
+        <label class="field" for="pw-repeat"><span>Repeat</span><input id="pw-repeat" type="password" name="password_repeat" autocomplete="new-password" required minlength="8"></label>
+        <button class="btn block" type="submit">Set password</button>
+      </form>
+    </div></div>
+    <div class="panel danger"><div class="panel-body">
+      <h2>Delete user</h2>
+      <p class="muted small">Removes the account, its app passwords and metadata. Files are moved to <code>deleted/</code>, not erased.</p>
+      {%- if is_self %}
+      <p class="muted small">You cannot delete the account you are signed in with.</p>
+      {%- else %}
+      <a class="btn danger block" href="{{ base }}/delete">Delete {{ user.username }}…</a>
+      {%- endif %}
+    </div></div>
+  </div>
+</div>
+{%- endblock %}

@@ -1,0 +1,23 @@
+{%- extends "admin/frame.html" -%}
+{%- block title %}Users{% endblock -%}
+{%- block content %}
+{%- if let Some(notice) = notice %}
+<div class="flash ok" role="status">{{ notice }}</div>
+{%- endif %}
+<div class="page-head">
+  <div><h1>Users</h1><p class="sub">{{ summary }}</p></div>
+  <div class="head-actions"><a class="btn primary" href="{{ frame.prefix }}/new-user">New user</a></div>
+</div>
+<div class="panel"><div class="table-wrap"><table>
+  <thead><tr><th>User</th><th>Role</th><th>Status</th><th>App passwords</th><th>Storage</th><th>Created</th><th class="end"></th></tr></thead>
+  <tbody>
+  {%- for user in users %}
+    <tr><td><div class="who"><b>{{ user.display_name }}</b><span class="mono">{{ user.username }}</span></div></td>
+      <td>{% if user.is_admin %}<span class="badge">Admin</span>{% else %}<span class="badge off">User</span>{% endif %}</td>
+      <td>{% if user.enabled %}<span class="badge ok dot">Enabled</span>{% else %}<span class="badge off dot">Disabled</span>{% endif %}</td>
+      <td class="num">{{ user.app_passwords }}</td><td class="num">{{ user.storage }}</td><td class="num">{{ user.created }}</td>
+      <td class="end"><a class="btn sm" href="{{ frame.prefix }}/users/{{ user.username }}">Manage</a></td></tr>
+  {%- endfor %}
+  </tbody>
+</table></div></div>
+{%- endblock %}

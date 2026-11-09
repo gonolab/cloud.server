@@ -130,6 +130,10 @@ pub enum Error {
         source: crate::path::PathError,
     },
 
+    /// The change would leave no enabled admin account, so nobody could use the web admin UI.
+    #[error("{0} is the last enabled admin; make another account an admin first, or keep this one")]
+    LastAdmin(Username),
+
     /// `init` was run against a database that already has accounts.
     #[error("the database already contains users; manage accounts with `gono-cloud user`")]
     AlreadyInitialized,

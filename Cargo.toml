@@ -27,6 +27,7 @@ dav-server = { version = "=0.11.0", default-features = false, features = ["local
 
 anyhow = "1.0.100"
 argon2 = "0.6.0"
+askama = { version = "0.16.1", default-features = false, features = ["config", "derive", "std"] }
 axum = { version = "0.8.9", features = ["ws"] }
 base64 = "0.22.1"
 bytes = "1.12.1"

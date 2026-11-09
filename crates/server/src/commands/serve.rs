@@ -22,6 +22,7 @@ use tokio::net::TcpListener;
 
 use super::load_config;
 use crate::{
+    admin::{Admin, ServerInfo},
     app::{self, AppState},
     auth::Authenticator,
     janitor::Janitor,
@@ -41,7 +42,8 @@ pub async fn run(config_path: &Path) -> anyhow::Result<()> {
         .map_or(Destination::Stdout, Destination::File);
     let _log_guard = logging::init(config.logging.level, destination)?;
 
-    let result = serve(config).await;
+    let config_path = std::path::absolute(config_path).unwrap_or_else(|_| config_path.into());
+    let result = serve(config, config_path).await;
     if let Err(err) = &result {
         // Also record fatal errors in the log, which may be a file.
         tracing::error!("{err:#}");
@@ -49,7 +51,8 @@ pub async fn run(config_path: &Path) -> anyhow::Result<()> {
     result
 }
 
-async fn serve(config: Config) -> anyhow::Result<()> {
+async fn serve(config: Config, config_path: std::path::PathBuf) -> anyhow::Result<()> {
+    let started_at = db::unix_now();
     for warning in config.warnings() {
         tracing::warn!("{warning}");
     }
@@ -65,6 +68,22 @@ async fn serve(config: Config) -> anyhow::Result<()> {
     }
     let layout = DataLayout::new(&config.storage.data_dir);
     layout.open().context("open data directory")?;
+    let case_insensitive = match layout.is_case_insensitive() {
+        Ok(true) => {
+            tracing::warn!(
+                data_dir = %layout.root().display(),
+                "the data directory is on a case-insensitive file system: names that differ \
+                 only in case (Report.pdf, report.pdf) cannot coexist, although clients on \
+                 other systems may create them; a case-sensitive file system is recommended"
+            );
+            Some(true)
+        }
+        Ok(false) => Some(false),
+        Err(err) => {
+            tracing::warn!(error = %err, "cannot tell whether the data directory ignores case");
+            None
+        }
+    };
     let purged = LockStore::new(pool.clone())
         .purge_expired(db::unix_now())
         .await?;
@@ -127,6 +146,34 @@ async fn serve(config: Config) -> anyhow::Result<()> {
         auth.limiter().clone(),
         &config.server.base_url,
     ));
+    let admin = if config.admin.enabled {
+        let info = ServerInfo {
+            started_at,
+            instance_id: dav.fs().instance_id().to_owned(),
+            bind: local_addr,
+            trusted_proxies: config.server.trusted_proxies.clone(),
+            config_path,
+            log: format!(
+                "{} → {}",
+                config.logging.level.as_str(),
+                config
+                    .logging
+                    .file
+                    .as_ref()
+                    .map_or_else(|| "stdout".to_owned(), |file| file.display().to_string())
+            ),
+            data_dir: config.storage.data_dir.clone(),
+            db_path: config.db.path.clone(),
+            case_insensitive,
+            lock_timeout_secs: config.webdav.max_lock_timeout_secs,
+            push: push.as_ref().map(|hub| *hub.settings()),
+            warnings: config.warnings(),
+        };
+        tracing::info!(path = %config.admin.path, "web admin UI enabled");
+        Some(Arc::new(Admin::new(&config.admin.path, info)))
+    } else {
+        None
+    };
     let state = AppState {
         db: pool.clone(),
         auth,
@@ -137,6 +184,7 @@ async fn serve(config: Config) -> anyhow::Result<()> {
         flow_starts: Arc::new(RateLimiter::new()),
         trusted_proxies: Arc::new(config.server.trusted_proxies.clone()),
         push: push.clone(),
+        admin,
     };
     let on_signal = {
         let push = push.clone();

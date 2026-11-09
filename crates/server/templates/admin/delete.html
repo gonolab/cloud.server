@@ -1,0 +1,20 @@
+{%- extends "admin/frame.html" -%}
+{%- block title %}Delete {{ username }}{% endblock -%}
+{%- block content %}
+<div class="crumbs"><a href="{{ frame.prefix }}/users">Users</a> / <a href="{{ base }}">{{ username }}</a> / Delete</div>
+<div class="panel narrow danger"><div class="panel-body">
+  <h1>Delete {{ username }}?</h1>
+  <p class="muted mt-6">This cannot be undone from the admin UI.</p>
+  <ul class="small bullets">
+    <li>The account, its {{ app_passwords }} app {% if app_passwords == 1 %}password{% else %}passwords{% endif %} and its browser sessions are removed; its devices are signed out.</li>
+    <li>Its files are moved to <code>deleted/</code> in the data directory; nothing is erased.</li>
+  </ul>
+  {%- if let Some(error) = error %}
+  <div class="flash warn" role="alert">{{ error }}</div>
+  {%- endif %}
+  <form method="post" action="{{ base }}/delete" class="actions">
+    <input type="hidden" name="csrf" value="{{ frame.csrf }}">
+    <button class="btn danger solid" type="submit">Delete user</button><a class="btn ghost" href="{{ base }}">Cancel</a>
+  </form>
+</div></div>
+{%- endblock %}

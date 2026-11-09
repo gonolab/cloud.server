@@ -3,7 +3,7 @@
 pub mod app_password;
 pub mod config_check;
 pub mod init;
-mod output;
+pub(crate) mod output;
 pub mod serve;
 pub mod user;
 

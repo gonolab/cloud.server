@@ -209,12 +209,72 @@ impl Default for NotifyPushConfig {
 }
 
 /// `[admin]` table.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AdminConfig {
     /// Serve the web admin UI. Admins sign in with their web login password; app passwords
     /// cannot access it.
     pub enabled: bool,
+
+    /// URL path of the admin UI, for example `/gono-admin`.
+    pub path: String,
+}
+
+impl Default for AdminConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            path: DEFAULT_ADMIN_PATH.to_owned(),
+        }
+    }
+}
+
+/// Default of `admin.path`.
+pub const DEFAULT_ADMIN_PATH: &str = "/gono-admin";
+
+/// First path segments the server uses itself; `admin.path` must not start with one of them.
+const RESERVED_SEGMENTS: &[&str] = &[
+    "204",
+    "apps",
+    "healthz",
+    "index.php",
+    "login",
+    "ocs",
+    "push",
+    "remote.php",
+    "status.php",
+];
+
+/// `admin.path` is `/` followed by one or more segments of unreserved URL characters, without a
+/// trailing slash, and outside the paths the server serves itself.
+fn check_admin_path(path: &str) -> Result<(), String> {
+    let Some(rest) = path.strip_prefix('/') else {
+        return Err("must start with '/'".to_owned());
+    };
+    if rest.is_empty() || rest.ends_with('/') {
+        return Err("must name a path below '/' without a trailing slash".to_owned());
+    }
+    for segment in rest.split('/') {
+        let valid = !segment.is_empty()
+            && segment != "."
+            && segment != ".."
+            && segment
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~'));
+        if !valid {
+            return Err(format!(
+                "segment {segment:?} must consist of letters, digits, '-', '.', '_' and '~'"
+            ));
+        }
+    }
+    let first = rest.split('/').next().unwrap_or_default();
+    if RESERVED_SEGMENTS
+        .iter()
+        .any(|reserved| reserved.eq_ignore_ascii_case(first))
+    {
+        return Err(format!("/{first} is used by the server itself"));
+    }
+    Ok(())
 }
 
 const fn default_bind() -> SocketAddr {
@@ -391,6 +451,11 @@ impl Config {
             }
         }
 
+        // [admin]
+        if let Err(message) = check_admin_path(&self.admin.path) {
+            reject("admin.path", message);
+        }
+
         if issues.is_empty() {
             Ok(())
         } else {
@@ -501,6 +566,7 @@ mod tests {
         assert_eq!(config.logging.file, None, "logs go to stdout by default");
         assert!(config.notify_push.enabled);
         assert!(!config.admin.enabled);
+        assert_eq!(config.admin.path, "/gono-admin");
         assert!(config.warnings().is_empty());
     }
 
@@ -700,6 +766,32 @@ mod tests {
             issue_keys(&config),
             ["storage.data_dir", "db.path", "logging.file"]
         );
+    }
+
+    #[test]
+    fn admin_path_is_validated() {
+        for good in ["/gono-admin", "/admin", "/ops/admin", "/a.b_c~d"] {
+            let raw = format!("{MINIMAL}\n[admin]\npath = \"{good}\"");
+            assert!(issue_keys(&parse(&raw)).is_empty(), "{good}");
+        }
+        for bad in [
+            "",
+            "/",
+            "admin",
+            "/admin/",
+            "/a//b",
+            "/a b",
+            "/%2e",
+            "/../x",
+            "/ocs",
+            "/push/x",
+            "/remote.php",
+            "/Index.php",
+            "/login",
+        ] {
+            let raw = format!("{MINIMAL}\n[admin]\npath = \"{bad}\"");
+            assert_eq!(issue_keys(&parse(&raw)), ["admin.path"], "{bad:?}");
+        }
     }
 
     #[test]

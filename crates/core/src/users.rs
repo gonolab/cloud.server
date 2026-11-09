@@ -4,6 +4,11 @@
 //! storage directories (see [`crate::storage`]); the directories are created before the
 //! transaction commits, so a failure leaves neither a half-created account nor an orphaned
 //! database row behind.
+//!
+//! **At least one enabled admin remains.** [`delete`] and [`set_enabled`] refuse to remove or
+//! disable the last enabled admin account ([`Error::LastAdmin`]). The check runs inside the
+//! same `BEGIN IMMEDIATE` transaction as the change, so two admins disabling each other at the
+//! same moment cannot both succeed.
 
 use sqlx::FromRow;
 
@@ -202,10 +207,28 @@ pub async fn get(pool: &Pool, username: &Username) -> Result<User> {
         .ok_or_else(|| Error::UserNotFound(username.clone()))
 }
 
+/// Fails with [`Error::LastAdmin`] if `username` is an enabled admin and no other enabled
+/// admin exists. Runs inside the caller's write transaction.
+async fn keep_an_admin(tx: &mut db::Tx, username: &Username) -> Result<()> {
+    let others: Option<i64> = sqlx::query_scalar(
+        "SELECT (SELECT COUNT(*) FROM users WHERE is_admin = 1 AND enabled = 1 \
+         AND username <> ?1) FROM users WHERE username = ?1 AND is_admin = 1 AND enabled = 1",
+    )
+    .bind(username.as_str())
+    .fetch_optional(&mut **tx)
+    .await?;
+    match others {
+        Some(0) => Err(Error::LastAdmin(username.clone())),
+        _ => Ok(()),
+    }
+}
+
 /// Deletes an account. App passwords, sessions, file metadata and locks go with it through
-/// `ON DELETE CASCADE`; the storage directories are left to the caller.
+/// `ON DELETE CASCADE`; the storage directories are left to the caller. The last enabled admin
+/// cannot be deleted.
 pub async fn delete(pool: &Pool, username: &Username) -> Result<User> {
     let mut tx = db::begin_immediate(pool).await?;
+    keep_an_admin(&mut tx, username).await?;
     let sql = format!("DELETE FROM users WHERE username = ?1 RETURNING {USER_COLUMNS}");
     let user: Option<User> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
         .bind(username.as_str())
@@ -222,47 +245,34 @@ pub async fn set_password_hash(
     username: &Username,
     password_hash: &str,
 ) -> Result<()> {
-    update(
-        pool,
-        username,
-        "password_hash = ?2",
-        password_hash.to_owned().into(),
-    )
-    .await
-}
-
-/// Enables or disables an account. A disabled account cannot sign in with any credential.
-pub async fn set_enabled(pool: &Pool, username: &Username, enabled: bool) -> Result<()> {
-    update(pool, username, "enabled = ?2", enabled.into()).await
-}
-
-/// The values [`update`] can bind.
-enum Value {
-    Text(String),
-    Bool(bool),
-}
-
-impl From<String> for Value {
-    fn from(value: String) -> Self {
-        Self::Text(value)
-    }
-}
-
-impl From<bool> for Value {
-    fn from(value: bool) -> Self {
-        Self::Bool(value)
-    }
-}
-
-async fn update(pool: &Pool, username: &Username, assignment: &str, value: Value) -> Result<()> {
     let mut tx = db::begin_immediate(pool).await?;
-    let sql = format!("UPDATE users SET {assignment}, updated_at = ?3 WHERE username = ?1");
-    let query = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(username.as_str());
-    let query = match value {
-        Value::Text(text) => query.bind(text),
-        Value::Bool(flag) => query.bind(flag),
-    };
-    let result = query.bind(db::unix_now()).execute(&mut *tx).await?;
+    let result =
+        sqlx::query("UPDATE users SET password_hash = ?2, updated_at = ?3 WHERE username = ?1")
+            .bind(username.as_str())
+            .bind(password_hash)
+            .bind(db::unix_now())
+            .execute(&mut *tx)
+            .await?;
+    if result.rows_affected() == 0 {
+        return Err(Error::UserNotFound(username.clone()));
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Enables or disables an account. A disabled account cannot sign in with any credential. The
+/// last enabled admin cannot be disabled.
+pub async fn set_enabled(pool: &Pool, username: &Username, enabled: bool) -> Result<()> {
+    let mut tx = db::begin_immediate(pool).await?;
+    if !enabled {
+        keep_an_admin(&mut tx, username).await?;
+    }
+    let result = sqlx::query("UPDATE users SET enabled = ?2, updated_at = ?3 WHERE username = ?1")
+        .bind(username.as_str())
+        .bind(enabled)
+        .bind(db::unix_now())
+        .execute(&mut *tx)
+        .await?;
     if result.rows_affected() == 0 {
         return Err(Error::UserNotFound(username.clone()));
     }

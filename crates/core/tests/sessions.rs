@@ -323,3 +323,42 @@ async fn web_sessions_slide_and_end() {
         2
     );
 }
+
+#[tokio::test]
+async fn sessions_of_a_user_can_be_ended_except_one() {
+    let (_dir, pool, user) = fixture().await;
+    let now = db::unix_now();
+    let keep = web_sessions::create(&pool, user, now).await.unwrap();
+    let other = web_sessions::create(&pool, user, now).await.unwrap();
+    let kept = web_sessions::lookup(&pool, keep.expose_secret(), now)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        web_sessions::delete_for_user(&pool, user, Some(kept.session_id))
+            .await
+            .unwrap(),
+        1
+    );
+    assert!(
+        web_sessions::lookup(&pool, other.expose_secret(), now)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        web_sessions::lookup(&pool, keep.expose_secret(), now)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    web_sessions::delete_for_user(&pool, user, None)
+        .await
+        .unwrap();
+    assert!(
+        web_sessions::lookup(&pool, keep.expose_secret(), now)
+            .await
+            .unwrap()
+            .is_none()
+    );
+}

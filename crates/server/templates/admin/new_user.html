@@ -1,0 +1,30 @@
+{%- extends "admin/frame.html" -%}
+{%- block title %}New user{% endblock -%}
+{%- block content %}
+<div class="crumbs"><a href="{{ frame.prefix }}/users">Users</a> / New user</div>
+<div class="page-head"><div><h1>New user</h1><p class="sub">The user signs in to Login Flow with this password; devices get their own app passwords.</p></div></div>
+{%- if let Some(error) = error %}
+<div class="flash bad narrow" role="alert">{{ error }}</div>
+{%- endif %}
+<div class="panel narrow"><div class="panel-body">
+  <form method="post" action="{{ frame.prefix }}/users">
+    <input type="hidden" name="csrf" value="{{ frame.csrf }}">
+    <div class="row">
+      <label class="field" for="new-username"><span>Username</span>
+        <input id="new-username" class="mono-input" type="text" name="username" value="{{ username }}" autocomplete="off" autocapitalize="none" spellcheck="false" required placeholder="alice">
+        <small>Lowercase letters, digits, <code>.</code> <code>_</code> <code>-</code>. Part of every WebDAV URL.</small></label>
+      <label class="field" for="new-display"><span>Display name</span>
+        <input id="new-display" type="text" name="display_name" value="{{ display_name }}" placeholder="Alice Example"><small>Optional.</small></label>
+    </div>
+    <div class="row">
+      <label class="field" for="new-password"><span>Web login password</span>
+        <input id="new-password" type="password" name="password" autocomplete="new-password" required minlength="8"></label>
+      <label class="field" for="new-password2"><span>Repeat password</span>
+        <input id="new-password2" type="password" name="password_repeat" autocomplete="new-password" required minlength="8"></label>
+    </div>
+    <label class="check" for="new-admin"><input id="new-admin" type="checkbox" name="admin" value="1"{% if admin %} checked{% endif %}>
+      <span><b>Administrator</b><span class="muted small">Can open this admin UI and manage every account.</span></span></label>
+    <div class="actions"><button class="btn primary" type="submit">Create user</button><a class="btn ghost" href="{{ frame.prefix }}/users">Cancel</a></div>
+  </form>
+</div></div>
+{%- endblock %}

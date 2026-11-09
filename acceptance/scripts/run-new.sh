@@ -195,6 +195,10 @@ path = "${WORK_DIR}/gono-cloud.db"
 [logging]
 level = "warn"
 file = "${LOG_FILE}"
+
+[admin]
+enabled = true
+path = "/gono-admin"
 EOF
 
 WEB_PASSWORD="$(random_password)"

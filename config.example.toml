@@ -93,6 +93,12 @@ debounce_secs = 5
 max_connections_per_user = 64
 
 [admin]
-# Serve the web admin UI. Admins sign in with their web login password; app passwords cannot
+# Serve the web admin UI: an overview of this server, user accounts and app passwords. Only
+# accounts with the admin flag can sign in, with their web login password; app passwords cannot
 # access it. Default: false.
 enabled = false
+
+# URL path of the admin UI. Letters, digits, "-", ".", "_" and "~" only, without a trailing
+# slash; paths the server uses itself (/remote.php, /ocs, /index.php, /push, ...) are refused.
+# Default: "/gono-admin".
+path = "/gono-admin"

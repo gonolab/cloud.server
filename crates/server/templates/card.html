@@ -1,0 +1,9 @@
+{%- extends "layout.html" -%}
+{%- block body -%}
+<div class="auth">
+  <main class="panel"><div class="panel-body">
+    <span class="brand"><span class="brand-mark">Gono Cloud</span>{% block brand_sub %}{% endblock %}</span>
+    {% block card %}{% endblock %}
+  </div></main>
+</div>
+{%- endblock -%}

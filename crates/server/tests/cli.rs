@@ -342,6 +342,20 @@ fn users_can_be_managed() {
     let missing = run(&mut instance.command(&["user", "delete", "alice"]));
     assert!(!missing.status.success());
     assert!(text(&missing.stderr).contains("does not exist"));
+
+    // The only admin can be neither disabled nor deleted.
+    for args in [
+        &["user", "disable", "admin"][..],
+        &["user", "delete", "admin"],
+    ] {
+        let output = run(&mut instance.command(args));
+        assert!(!output.status.success(), "{args:?}");
+        assert!(
+            text(&output.stderr).contains("last enabled admin"),
+            "{args:?}: {}",
+            text(&output.stderr)
+        );
+    }
 }
 
 #[test]

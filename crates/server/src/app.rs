@@ -13,6 +13,7 @@
 //!   writable mount are refused with 403 before the protocol is looked at.
 //! - notify_push, when `notify_push.enabled`: the WebSocket at `/push/ws` and the pre-auth
 //!   endpoint `/index.php/apps/notify_push/pre_auth`: see [`crate::notify_push`].
+//! - The web admin UI under `admin.path`, when `admin.enabled`: see [`crate::admin`].
 //!
 //! Every response to a WebDAV request passes [`OcHeadersLayer`], which adds the `OC-ETag`,
 //! `OC-FileId` and `X-NC-Permissions` headers, and every request is logged once with secrets
@@ -39,6 +40,7 @@ use ipnet::IpNet;
 use url::Url;
 
 use crate::{
+    admin::{self, Admin},
     auth::{AuthOutcome, Authenticator, basic_challenge},
     client_ip::client_ip,
     login_flow, nextcloud, notify_push,
@@ -69,6 +71,8 @@ pub struct AppState {
     pub trusted_proxies: Arc<Vec<IpNet>>,
     /// The notify_push hub, when `notify_push.enabled`.
     pub push: Option<Arc<Hub>>,
+    /// The web admin UI, when `admin.enabled`.
+    pub admin: Option<Arc<Admin>>,
 }
 
 /// Builds the application router.
@@ -109,6 +113,9 @@ pub fn router(state: AppState) -> Router {
             .route(WEBSOCKET_PATH, get(notify_push::websocket))
             .route(PRE_AUTH_PATH, post(notify_push::pre_auth))
             .route("/apps/notify_push/pre_auth", post(notify_push::pre_auth));
+    }
+    if let Some(admin) = &state.admin {
+        router = router.merge(admin::routes(admin.prefix()));
     }
     router
         .layer(middleware::from_fn_with_state(
@@ -352,6 +359,7 @@ mod tests {
             flow_starts: Arc::new(RateLimiter::new()),
             trusted_proxies: Arc::new(Vec::new()),
             push: None,
+            admin: None,
         };
         Fixture {
             dir,
@@ -819,7 +827,7 @@ mod tests {
                 .contains("frame-ancestors 'none'")
         );
         assert_eq!(form.header("x-frame-options"), "DENY");
-        assert_eq!(form.header("referrer-policy"), "no-referrer");
+        assert_eq!(form.header("referrer-policy"), "same-origin");
         let csrf_cookie = set_cookie(&form, "gono_csrf").expect("csrf cookie");
         let csrf = csrf_field(&form.body);
         let login_body = |csrf: &str, password: &str| {

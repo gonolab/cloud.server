@@ -161,3 +161,118 @@ async fn listing_deleting_and_recording_use() {
     assert!(app_passwords::delete(&pool, alice, first).await.unwrap());
     assert_eq!(app_passwords::list(&pool, alice).await.unwrap().len(), 1);
 }
+
+async fn add_admin(pool: &Pool, name: &str) -> i64 {
+    let username = Username::new(name).unwrap();
+    users::create(
+        pool,
+        &NewUser {
+            username: &username,
+            display_name: name,
+            password_hash: "x",
+            is_admin: true,
+        },
+        |_| Ok(()),
+    )
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn the_last_enabled_admin_can_be_neither_disabled_nor_deleted() {
+    let dir = tempfile::tempdir().unwrap();
+    let pool = database(dir.path()).await;
+    let root = Username::new("root").unwrap();
+    let ops = Username::new("ops").unwrap();
+    add_admin(&pool, "root").await;
+    add_user(&pool, "alice").await;
+    let alice = Username::new("alice").unwrap();
+
+    assert!(matches!(
+        users::set_enabled(&pool, &root, false).await,
+        Err(Error::LastAdmin(_))
+    ));
+    assert!(matches!(
+        users::delete(&pool, &root).await,
+        Err(Error::LastAdmin(_))
+    ));
+    // Ordinary accounts are not affected.
+    users::set_enabled(&pool, &alice, false).await.unwrap();
+    users::delete(&pool, &alice).await.unwrap();
+
+    // With a second enabled admin, either one may go, but not both.
+    add_admin(&pool, "ops").await;
+    users::set_enabled(&pool, &root, false).await.unwrap();
+    assert!(matches!(
+        users::delete(&pool, &ops).await,
+        Err(Error::LastAdmin(_))
+    ));
+    // A disabled admin does not count, and may be deleted.
+    users::delete(&pool, &root).await.unwrap();
+    assert!(users::find(&pool, &ops).await.unwrap().unwrap().enabled);
+}
+
+#[tokio::test]
+async fn concurrent_admin_removals_leave_one_admin() {
+    let dir = tempfile::tempdir().unwrap();
+    let pool = database(dir.path()).await;
+    let names: Vec<Username> = ["a1", "a2", "a3", "a4"]
+        .iter()
+        .map(|name| Username::new(*name).unwrap())
+        .collect();
+    for name in &names {
+        add_admin(&pool, name.as_str()).await;
+    }
+    // Every admin tries to disable or delete itself at the same moment.
+    let tasks: Vec<_> = names
+        .iter()
+        .enumerate()
+        .map(|(index, name)| {
+            let pool = pool.clone();
+            let name = name.clone();
+            tokio::spawn(async move {
+                if index % 2 == 0 {
+                    users::set_enabled(&pool, &name, false).await
+                } else {
+                    users::delete(&pool, &name).await.map(|_| ())
+                }
+            })
+        })
+        .collect();
+    let mut refused = 0;
+    for task in tasks {
+        if let Err(Error::LastAdmin(_)) = task.await.unwrap() {
+            refused += 1;
+        }
+    }
+    assert_eq!(refused, 1);
+    let overview = gono_core::stats::overview(&pool, db::unix_now())
+        .await
+        .unwrap();
+    assert_eq!(overview.admins, 1);
+}
+
+#[tokio::test]
+async fn overview_counts() {
+    let dir = tempfile::tempdir().unwrap();
+    let pool = database(dir.path()).await;
+    add_admin(&pool, "root").await;
+    let alice = add_user(&pool, "alice").await;
+    app_passwords::create(&pool, alice, "phone", Vec::new(), None)
+        .await
+        .unwrap();
+    users::set_enabled(&pool, &Username::new("alice").unwrap(), false)
+        .await
+        .unwrap();
+    let overview = gono_core::stats::overview(&pool, db::unix_now())
+        .await
+        .unwrap();
+    assert_eq!(
+        (overview.users, overview.admins, overview.disabled),
+        (2, 1, 1)
+    );
+    assert_eq!(overview.app_passwords, 1);
+    assert_eq!(overview.storage_used, 0);
+    let per_user = gono_core::stats::per_user(&pool).await.unwrap();
+    assert_eq!(per_user[&alice].app_passwords, 1);
+}

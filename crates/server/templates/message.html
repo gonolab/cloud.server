@@ -1,0 +1,16 @@
+{%- extends "card.html" -%}
+{%- block title %}{{ title }}{% endblock -%}
+{%- block card %}
+<h1>{{ heading }}</h1>
+{%- if let Some(client) = client %}
+<p class="mt-6"><span class="client">{{ client }}</span> {{ lead }}</p>
+{%- else %}
+<p class="mt-6">{{ lead }}</p>
+{%- endif %}
+{%- if let Some(note) = note %}
+<p class="muted small">{{ note }}</p>
+{%- endif %}
+{%- if let Some((href, label)) = link %}
+<div class="actions mt-20"><a class="btn primary" href="{{ href }}">{{ label }}</a></div>
+{%- endif %}
+{%- endblock %}

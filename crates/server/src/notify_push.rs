@@ -480,6 +480,7 @@ mod tests {
             flow_starts: Arc::new(RateLimiter::new()),
             trusted_proxies: Arc::new(Vec::new()),
             push: Some(hub),
+            admin: None,
         };
         let app = crate::app::router(state.clone());
         tokio::spawn(async move {

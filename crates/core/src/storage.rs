@@ -180,6 +180,31 @@ impl DataLayout {
         Ok(Some(target))
     }
 
+    /// Whether the file system of the data directory treats names that differ only in case
+    /// (`Report.pdf`, `report.pdf`) as the same name, like the default setups of macOS and
+    /// Windows. Probes with a temporary file in `tmp/`.
+    pub fn is_case_insensitive(&self) -> Result<bool> {
+        let tmp = self.tmp_dir();
+        let token = crate::secret::random_token(12);
+        let upper = tmp.join(format!(
+            "CaseProbe-{}",
+            secrecy::ExposeSecret::expose_secret(&token)
+        ));
+        let lower = tmp.join(
+            upper
+                .file_name()
+                .map_or_else(String::new, |name| name.to_string_lossy().to_lowercase()),
+        );
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&upper)
+            .map_err(|source| io_error(&upper, source))?;
+        let insensitive = fs::symlink_metadata(&lower).is_ok();
+        fs::remove_file(&upper).map_err(|source| io_error(&upper, source))?;
+        Ok(insensitive)
+    }
+
     /// Fails with [`Error::CrossDevice`] unless every path lies on the same file system.
     #[cfg(unix)]
     fn check_same_file_system(&self, paths: &[PathBuf]) -> Result<()> {
@@ -289,6 +314,17 @@ pub fn upload_session_dir_name(upload_id: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn case_probe_matches_the_file_system_and_cleans_up() {
+        let dir = tempfile::tempdir().unwrap();
+        let layout = DataLayout::new(dir.path().join("data"));
+        layout.create().unwrap();
+        fs::write(dir.path().join("Probe"), b"").unwrap();
+        let expected = dir.path().join("probe").exists();
+        assert_eq!(layout.is_case_insensitive().unwrap(), expected);
+        assert_eq!(fs::read_dir(layout.tmp_dir()).unwrap().count(), 0);
+    }
 
     #[cfg(unix)]
     #[test]

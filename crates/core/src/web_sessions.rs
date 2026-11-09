@@ -132,6 +132,21 @@ pub async fn delete(pool: &Pool, token: &str) -> Result<bool> {
     Ok(deleted)
 }
 
+/// Ends every session of `user_id` except `keep` (the session of the request that asked for
+/// it, if any). Used when a password changes or an account is disabled. Returns how many
+/// sessions ended.
+pub async fn delete_for_user(pool: &Pool, user_id: i64, keep: Option<i64>) -> Result<u64> {
+    let mut tx = db::begin_immediate(pool).await?;
+    let deleted = sqlx::query("DELETE FROM web_sessions WHERE user_id = ?1 AND id IS NOT ?2")
+        .bind(user_id)
+        .bind(keep)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+    tx.commit().await?;
+    Ok(deleted)
+}
+
 /// Removes every session that expired at `now`. Returns how many there were.
 pub async fn purge_expired(pool: &Pool, now: i64) -> Result<u64> {
     let mut tx = db::begin_immediate(pool).await?;

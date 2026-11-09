@@ -106,7 +106,7 @@ pub enum UserCommand {
     /// Delete a user account with its app passwords, sessions and metadata.
     ///
     /// The user's files are not deleted: they are moved to `<data_dir>/deleted/` so that a new
-    /// account can never inherit them.
+    /// account can never inherit them. The last enabled admin cannot be deleted.
     Delete {
         /// Account to delete.
         username: Username,
@@ -127,7 +127,8 @@ pub enum UserCommand {
         username: Username,
     },
 
-    /// Block a user from signing in. Existing app passwords stop working too.
+    /// Block a user from signing in. Existing app passwords stop working too. The last enabled
+    /// admin cannot be disabled.
     Disable {
         /// Account to disable.
         username: Username,

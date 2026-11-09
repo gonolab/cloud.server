@@ -1078,8 +1078,23 @@ fn copy_tree(from: &Path, to: &Path, depth_zero: bool) -> io::Result<Vec<(RelPat
 /// Free space for unprivileged users on the file system holding `path`.
 #[cfg(unix)]
 pub fn free_space(path: &Path) -> Option<u64> {
+    disk_space(path).map(|(free, _)| free)
+}
+
+/// Free space for unprivileged users and total size of the file system holding `path`.
+#[cfg(unix)]
+pub fn disk_space(path: &Path) -> Option<(u64, u64)> {
     let stat = rustix::fs::statvfs(path).ok()?;
-    Some(stat.f_bavail.saturating_mul(stat.f_frsize))
+    Some((
+        stat.f_bavail.saturating_mul(stat.f_frsize),
+        stat.f_blocks.saturating_mul(stat.f_frsize),
+    ))
+}
+
+/// Free and total space of the file system holding `path` (unknown here).
+#[cfg(not(unix))]
+pub fn disk_space(_path: &Path) -> Option<(u64, u64)> {
+    None
 }
 
 /// Free space for unprivileged users on the file system holding `path` (unknown here).

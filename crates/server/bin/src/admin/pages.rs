@@ -1,4 +1,4 @@
-//! Templates of the admin UI (`crates/server/templates/admin/`) and the values they show.
+//! Templates of the admin UI (`crates/server/bin/templates/admin/`) and the values they show.
 //!
 //! Everything a template prints is prepared here as text, so the templates only lay values
 //! out; askama escapes every value. Element ids are fixed per page (see the uniqueness test).

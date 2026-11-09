@@ -1,5 +1,15 @@
 [workspace]
-members = ["crates/*"]
+members = ["crates/server/*"]
+# What a plain `cargo build` / `cargo test` in the repository root builds. Client crates (and the
+# desktop, Android and iOS apps) will be workspace members but stay out of this list, so default
+# builds never pull in Tauri or mobile toolchains; build them with `-p` or `--workspace`.
+# See docs/repository-layout.md.
+default-members = [
+  "crates/server/bin",
+  "crates/server/core",
+  "crates/server/dav",
+  "crates/server/nextcloud",
+]
 # The acceptance suite is a standalone crate with its own `[workspace]`. Vendored third-party
 # crates are built as dependencies only, without the workspace lints.
 exclude = ["acceptance", "vendor"]
@@ -17,9 +27,9 @@ publish = false
 
 [workspace.dependencies]
 # Internal crates.
-gono-core = { path = "crates/core" }
-gono-dav = { path = "crates/dav" }
-gono-nextcloud = { path = "crates/nextcloud" }
+gono-core = { path = "crates/server/core" }
+gono-dav = { path = "crates/server/dav" }
+gono-nextcloud = { path = "crates/server/nextcloud" }
 
 # Pinned exactly: the WebDAV layer is built against this version's trait surface
 # (`GuardedFileSystem`, `DavMetaData`, `DavLockSystem`). Upgrade deliberately.

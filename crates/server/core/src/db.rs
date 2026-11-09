@@ -4,7 +4,7 @@
 //! - Writes go through [`begin_immediate`]: one `BEGIN IMMEDIATE` transaction per operation,
 //!   so the write lock is taken up front and concurrent writers wait on `busy_timeout` instead
 //!   of failing halfway through a transaction with `SQLITE_BUSY`.
-//! - Migrations live in `crates/core/migrations/` and are embedded into the binary. They are
+//! - Migrations live in `crates/server/core/migrations/` and are embedded into the binary. They are
 //!   append-only once released; see the header of `0001_initial.sql` and
 //!   [`crate::meta`] for the path comparison rules every query must follow.
 

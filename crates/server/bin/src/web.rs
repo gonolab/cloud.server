@@ -1,8 +1,8 @@
 //! Building blocks of the server's HTML pages: the Login Flow v2 pages and the web admin UI.
 //!
-//! - **Pages** are askama templates (`crates/server/templates/`), rendered with [`render`].
+//! - **Pages** are askama templates (`crates/server/bin/templates/`), rendered with [`render`].
 //!   Every value is HTML-escaped by the template engine; the one stylesheet
-//!   (`crates/server/assets/web.css`) is embedded in every page.
+//!   (`crates/server/bin/assets/web.css`) is embedded in every page.
 //! - **Sign-in** ([`Web::sign_in`]) with the web login password (Argon2), behind the same
 //!   per-client [`RateLimiter`] as device authentication: checked before anything is
 //!   verified, one token per failure. Unknown accounts cost the same Argon2 work as known

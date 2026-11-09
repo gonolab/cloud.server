@@ -103,7 +103,7 @@ fn free_port() -> SocketAddr {
 }
 
 fn example_config() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config.example.toml")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../config.example.toml")
 }
 
 #[test]

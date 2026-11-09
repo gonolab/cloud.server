@@ -871,7 +871,7 @@ mod tests {
 
     #[test]
     fn example_config_is_valid() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config.example.toml");
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../config.example.toml");
         let config = Config::load(&path).expect("config.example.toml should be valid");
         assert!(config.warnings().is_empty(), "{:?}", config.warnings());
     }

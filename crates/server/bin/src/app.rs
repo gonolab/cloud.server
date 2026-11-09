@@ -248,7 +248,7 @@ async fn webdav(
 async fn serve_dav(state: &AppState, identity: Arc<Identity>, request: Request) -> Response {
     let request = match check_xml_body(request).await {
         Ok(request) => request,
-        Err(rejection) => return rejection,
+        Err(status) => return status.into_response(),
     };
     if request.method().as_str() == "REPORT" {
         return report::handle(&state.dav, identity, request)
@@ -276,7 +276,7 @@ async fn uploads(
     }
     let request = match check_xml_body(request).await {
         Ok(request) => request,
-        Err(rejection) => return rejection,
+        Err(status) => return status.into_response(),
     };
     state.uploads.handle(identity, request).await.map(Body::new)
 }
@@ -286,13 +286,13 @@ async fn uploads(
 /// [`xml_limits::MAX_DEPTH`], before any parser builds a tree from it. Bodies larger than
 /// [`xml_limits::MAX_BODY`] are refused with 413, as the handlers behind this would. Requests
 /// with other methods pass through untouched, so `PUT` bodies keep streaming.
-async fn check_xml_body(request: Request) -> Result<Request, Response> {
+async fn check_xml_body(request: Request) -> Result<Request, StatusCode> {
     if !xml_limits::parses_body(request.method()) {
         return Ok(request);
     }
     let (parts, body) = request.into_parts();
     let Ok(bytes) = axum::body::to_bytes(body, xml_limits::MAX_BODY).await else {
-        return Err(StatusCode::PAYLOAD_TOO_LARGE.into_response());
+        return Err(StatusCode::PAYLOAD_TOO_LARGE);
     };
     if xml_limits::exceeds_depth(&bytes, xml_limits::MAX_DEPTH) {
         tracing::debug!(
@@ -300,7 +300,7 @@ async fn check_xml_body(request: Request) -> Result<Request, Response> {
             "refused an XML body nested deeper than {} levels",
             xml_limits::MAX_DEPTH
         );
-        return Err(StatusCode::BAD_REQUEST.into_response());
+        return Err(StatusCode::BAD_REQUEST);
     }
     Ok(Request::from_parts(parts, Body::from(bytes)))
 }

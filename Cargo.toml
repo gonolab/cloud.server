@@ -1,7 +1,8 @@
 [workspace]
 members = ["crates/*"]
-# The acceptance suite is a standalone crate with its own `[workspace]`.
-exclude = ["acceptance"]
+# The acceptance suite is a standalone crate with its own `[workspace]`. Vendored third-party
+# crates are built as dependencies only, without the workspace lints.
+exclude = ["acceptance", "vendor"]
 resolver = "3"
 
 [workspace.package]
@@ -67,6 +68,10 @@ tracing-subscriber = { version = "0.3.23", default-features = false, features = 
 url = { version = "2.5.8", features = ["serde"] }
 uuid = { version = "1.29.2", features = ["v4"] }
 xmltree = "0.12.0"
+
+# dav-server 0.11.0 with local fixes; see vendor/dav-server/VENDORED.md.
+[patch.crates-io]
+dav-server = { path = "vendor/dav-server" }
 
 [workspace.lints.rust]
 unsafe_code = "deny"

@@ -1,0 +1,43 @@
+# Tests that are expected to fail against the legacy server (git commit d366e79, v0.1.4).
+# Format: <test binary>::<test name>. scripts/run-legacy.sh fails when the set of failing tests
+# differs from this list. See legacy-baseline.md for what each failure means.
+
+# Defect 1: a read-only app password can rewrite files with PATCH + X-Update-Range.
+scope::regression_read_only_scope_rejects_patch
+
+# Defect 2: prefix queries use an unescaped, case-insensitive LIKE.
+webdav::regression_delete_keeps_metadata_of_wildcard_sibling
+webdav::regression_move_keeps_metadata_of_wildcard_sibling
+
+# Defect 3: two ETag sources for one file (PUT/HEAD/chunk MOVE vs. GET/PROPFIND/REPORT).
+nextcloud::regression_etag_is_identical_across_methods
+nextcloud::regression_if_match_with_put_etag_succeeds
+nextcloud::chunked_upload_reports_the_final_etag
+
+# Defect 4: directory ETags do not propagate to ancestor collections.
+nextcloud::regression_dir_etag_propagates_on_modify
+nextcloud::dir_etag_propagates_on_create
+nextcloud::dir_etag_propagates_on_mkcol
+nextcloud::dir_etag_propagates_on_delete
+nextcloud::dir_etag_propagates_on_copy
+nextcloud::dir_etag_propagates_on_move_between_directories
+nextcloud::dir_etag_propagates_on_chunked_upload
+
+# Defect 5: the assembled chunked upload is not checked against OC-Total-Length.
+nextcloud::regression_chunked_upload_verifies_total_length
+
+# Defect 6: a standalone DELETE does not reach notify_push clients.
+notify_push::regression_delete_triggers_a_file_notification
+
+# Defect 7: Login Flow v2 has no consent page and hands out the typed password.
+login_flow::regression_login_flow_requires_explicit_consent
+login_flow::regression_login_flow_mints_a_new_app_password
+
+# Defect 8: the admin UI accepts app passwords and ignores their scope.
+admin::regression_admin_rejects_view_scoped_app_password
+admin::admin_rejects_full_scope_app_password
+
+# Found while writing the suite (see legacy-baseline.md, "New findings").
+nextcloud::fileid_is_numeric_and_matches_oc_id
+nextcloud::oc_size_reports_file_and_recursive_folder_sizes
+scope::read_only_scope_can_read

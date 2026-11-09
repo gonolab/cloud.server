@@ -1,0 +1,16 @@
+[package]
+name = "gono-dav"
+description = "WebDAV file system, metadata and locking for Gono Cloud, built on dav-server."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+dav-server.workspace = true
+gono-core.workspace = true
+
+[lints]
+workspace = true

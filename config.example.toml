@@ -1,0 +1,83 @@
+# Gono Cloud configuration.
+#
+# Copy this file to `config.toml` (or anywhere else) and point the server at it with
+# `gono-cloud --config <path>` or the GONO_CLOUD_CONFIG environment variable. The default is
+# `config.toml` in the current directory.
+#
+# - Unknown keys are rejected, so a typo fails loudly instead of being ignored.
+# - Relative paths are resolved against the directory that contains this file.
+# - Run `gono-cloud config check` to validate the file and print the effective settings.
+
+[server]
+# Address and port of the plain-HTTP listener. Gono Cloud does not terminate TLS: put a reverse
+# proxy (nginx, Caddy, ...) in front of it. Only loopback addresses are accepted unless
+# `allow_non_loopback_bind` is true. Default: "127.0.0.1:16102".
+bind = "127.0.0.1:16102"
+
+# Allow `bind` to use a non-loopback address, for example when the server runs in a container
+# and the proxy reaches it over a container network. Make sure nothing but the proxy can connect.
+# Default: false.
+allow_non_loopback_bind = false
+
+# Public origin of the server as clients see it: scheme, host and optional port, without a path.
+# Used to build absolute URLs (Login Flow v2, capabilities). It is never guessed from request
+# headers. Required.
+base_url = "https://cloud.example.com"
+
+# Reverse proxies allowed to set the client address through forwarding headers
+# (X-Forwarded-For, Forwarded). IP addresses or CIDR blocks. Requests from any other peer keep
+# their peer address and their forwarding headers are ignored. Default: [] (trust nobody).
+trusted_proxies = ["127.0.0.1", "::1"]
+
+[storage]
+# Directory holding user files. It belongs to the server: change files only through WebDAV. If
+# you change them directly (SSH, Samba, rsync, ...), run `gono-cloud rescan` afterwards.
+# Required.
+data_dir = "data"
+
+[db]
+# SQLite database with accounts and file metadata. Created by `gono-cloud init`. Required.
+path = "gono-cloud.db"
+
+# Maximum number of pooled connections, 1 to 64. Default: 8.
+max_connections = 8
+
+# Seconds a connection waits for a competing writer before failing. Default: 5.
+busy_timeout_secs = 5
+
+[logging]
+# Minimum level of Gono Cloud's own log events: "error", "warn", "info", "debug" or "trace".
+# Dependencies only log warnings and errors. The GONO_CLOUD_LOG environment variable overrides
+# this with a full tracing filter, for example GONO_CLOUD_LOG="info,sqlx=debug".
+# Default: "info".
+level = "info"
+
+# File to append log lines to. When unset, `serve` logs to stdout, which suits systemd and
+# containers. Other commands log only warnings and errors, to stderr. Passwords and tokens are
+# never logged.
+# file = "logs/gono-cloud.log"
+
+[notify_push]
+# Real-time change notifications for Nextcloud clients over WebSocket. Default: true.
+enabled = true
+
+# Seconds between pings on idle connections. Default: 30.
+ping_interval_secs = 30
+
+# Seconds a new connection has to authenticate before it is closed. Default: 15.
+auth_timeout_secs = 15
+
+# Lifetime of a pre-auth token handed out over OCS, in seconds. Default: 15.
+pre_auth_ttl_secs = 15
+
+# Minimum seconds between two change notifications to the same user; changes inside the window
+# are coalesced. Default: 5.
+debounce_secs = 5
+
+# Maximum concurrent connections per user. Default: 64.
+max_connections_per_user = 64
+
+[admin]
+# Serve the web admin UI. Admins sign in with their web login password; app passwords cannot
+# access it. Default: false.
+enabled = false

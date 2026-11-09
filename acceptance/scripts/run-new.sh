@@ -267,7 +267,8 @@ PASSED="$(collect_results ok)"
 EXPECTED="$(sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^$/d' "${EXPECTED_FAILURES_FILE}" | sort -u)"
 UNEXPECTED_FAILURES="$(comm -23 <(printf '%s\n' "${FAILED}") <(printf '%s\n' "${EXPECTED}") | sed '/^$/d')"
 UNEXPECTED_PASSES="$(comm -12 <(printf '%s\n' "${PASSED}") <(printf '%s\n' "${EXPECTED}") | sed '/^$/d')"
-SKIPPED="$(grep -o 'SKIP [A-Za-z0-9_:]*: ' "${TEST_LOG}" | wc -l | tr -d ' ')"
+# grep exits 1 when nothing was skipped, which must not end the script.
+SKIPPED="$({ grep -o 'SKIP [A-Za-z0-9_:]*: ' "${TEST_LOG}" || true; } | wc -l | tr -d ' ')"
 
 echo
 echo "==> summary"

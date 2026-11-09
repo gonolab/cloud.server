@@ -5,8 +5,12 @@ Gono Cloud is a self-hosted WebDAV file server compatible with Nextcloud clients
 ## Status
 
 The project is being rewritten from scratch on top of
-[dav-server-rs](https://github.com/messense/dav-server-rs). This branch does not contain a
-buildable server yet.
+[dav-server-rs](https://github.com/messense/dav-server-rs). The core WebDAV server works: users
+and app passwords (`gono-cloud user`, `gono-cloud app-password`), WebDAV under
+`/remote.php/dav/files/<user>/` with Nextcloud live properties, ETags and locks, and read-only or
+scoped app passwords. The rest of the Nextcloud protocol surface (status, capabilities, OCS,
+chunked upload, Login Flow v2, notify_push) and the web admin UI are not there yet; see
+`docs/v1-scope.md` and `acceptance/new-expected-failures.txt`.
 
 ## Legacy implementation
 
@@ -31,6 +35,8 @@ Licensed under either of
 - MIT license ([LICENSE-MIT](LICENSE-MIT) or <https://opensource.org/licenses/MIT>)
 
 at your option.
+
+`vendor/dav-server` is a patched copy of dav-server (Apache-2.0); see its `VENDORED.md`.
 
 Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in
 this project by you, as defined in the Apache-2.0 license, shall be dual licensed as above,

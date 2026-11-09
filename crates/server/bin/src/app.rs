@@ -11,6 +11,8 @@
 //! - `/remote.php/dav/uploads/<user>/...`: Nextcloud chunked upload v2
 //!   ([`gono_server_nextcloud::chunking`]). Other users' namespaces and app passwords without any
 //!   writable mount are refused with 403 before the protocol is looked at.
+//! - Everything else under `/remote.php/dav`, the root included: authenticated first, then 404
+//!   ([`dav_namespace`]), so that anonymous probes see a Basic challenge as on Nextcloud.
 //! - On both WebDAV routes, after authentication, the XML body of `PROPFIND`, `PROPPATCH`,
 //!   `LOCK` and `REPORT` is read here and refused with 400 when its elements nest too deeply
 //!   ([`check_xml_body`]): the XML parsers behind these routes recurse once per level, and a
@@ -89,6 +91,9 @@ pub fn router(state: AppState) -> Router {
         .route("/remote.php/webdav/", any(webdav))
         .route("/remote.php/webdav/{*path}", any(webdav))
         .route("/remote.php/dav/uploads/{*path}", any(uploads))
+        .route("/remote.php/dav", any(dav_namespace))
+        .route("/remote.php/dav/", any(dav_namespace))
+        .route("/remote.php/dav/{*rest}", any(dav_namespace))
         .layer(OcHeadersLayer);
     let nextcloud = Router::new()
         .route("/status.php", get(nextcloud::status_php))
@@ -239,6 +244,23 @@ async fn webdav(
 ) -> Response {
     match authenticate(&state, peer, request.headers()).await {
         Ok(identity) => serve_dav(&state, identity, request).await,
+        Err(rejection) => rejection.into_response(),
+    }
+}
+
+/// The rest of `/remote.php/dav`: the root itself and paths without a handler of their own
+/// (`files/` without a user, `principals/`, ...). Nextcloud authenticates every request below
+/// `/remote.php/dav` before it routes it, and the Android app depends on that: it detects the
+/// authentication method with an anonymous `HEAD /remote.php/dav` and refuses the server unless
+/// the answer is 401 with a Basic challenge. Authenticated requests get 404, since nothing is
+/// served here.
+async fn dav_namespace(
+    State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    request: Request,
+) -> Response {
+    match authenticate(&state, peer, request.headers()).await {
+        Ok(_) => StatusCode::NOT_FOUND.into_response(),
         Err(rejection) => rejection.into_response(),
     }
 }
@@ -490,6 +512,48 @@ mod tests {
             .send("PROPFIND", "/remote.php/webdav/", Some(&f.full), &[], "")
             .await;
         assert_eq!(alias.status, StatusCode::MULTI_STATUS);
+    }
+
+    #[tokio::test]
+    async fn the_rest_of_the_dav_namespace_asks_for_credentials_first() {
+        // Nextcloud Android detects the authentication method with an anonymous
+        // `HEAD /remote.php/dav` and gives up on anything but a Basic challenge.
+        let f = fixture().await;
+        for (method, uri) in [
+            ("HEAD", "/remote.php/dav"),
+            ("HEAD", "/remote.php/dav/"),
+            ("PROPFIND", "/remote.php/dav/"),
+            ("PROPFIND", "/remote.php/dav/files"),
+            ("GET", "/remote.php/dav/files/"),
+            ("PROPFIND", "/remote.php/dav/uploads/"),
+            ("GET", "/remote.php/dav/principals/users/alice"),
+        ] {
+            let anonymous = f.send(method, uri, None, &[], "").await;
+            assert_eq!(anonymous.status, StatusCode::UNAUTHORIZED, "{method} {uri}");
+            assert!(
+                anonymous.header("www-authenticate").starts_with("Basic"),
+                "{method} {uri}"
+            );
+            let wrong = f.send(method, uri, Some("nope"), &[], "").await;
+            assert_eq!(wrong.status, StatusCode::UNAUTHORIZED, "{method} {uri}");
+            let known = f.send(method, uri, Some(&f.full), &[], "").await;
+            assert_eq!(known.status, StatusCode::NOT_FOUND, "{method} {uri}");
+        }
+        // The routes with handlers of their own are not shadowed.
+        let files = f
+            .send("PROPFIND", FILES, Some(&f.full), &[("Depth", "0")], "")
+            .await;
+        assert_eq!(files.status, StatusCode::MULTI_STATUS, "{}", files.body);
+        let uploads = f
+            .send(
+                "PROPFIND",
+                "/remote.php/dav/uploads/alice",
+                Some(&f.full),
+                &[("Depth", "0")],
+                "",
+            )
+            .await;
+        assert_eq!(uploads.status, StatusCode::MULTI_STATUS, "{}", uploads.body);
     }
 
     #[tokio::test]

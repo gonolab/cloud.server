@@ -43,6 +43,23 @@ async fn connectivity_probe_returns_204() {
 }
 
 #[tokio::test]
+async fn dav_root_answers_anonymous_probes_with_a_basic_challenge() {
+    // Nextcloud Android detects the authentication method with an anonymous
+    // `HEAD /remote.php/dav` and refuses the server unless it gets a Basic challenge.
+    let Some(ctx) = Ctx::bare() else { return };
+    for path in ["/remote.php/dav", "/remote.php/dav/"] {
+        let response = gono_acceptance::dav::send(&ctx.http, ctx.http.head(ctx.url(path))).await;
+        response.expect(&[401]);
+        let challenge = response.header("www-authenticate").unwrap_or_default();
+        assert!(
+            challenge.to_ascii_lowercase().starts_with("basic"),
+            "{}",
+            response.describe()
+        );
+    }
+}
+
+#[tokio::test]
 async fn capabilities_are_public_on_all_aliases() {
     let Some(ctx) = Ctx::bare() else { return };
     for path in [

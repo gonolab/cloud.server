@@ -9,10 +9,12 @@ The project is being rewritten from scratch on top of
 users and app passwords (`gono-cloud user`, `gono-cloud app-password`), WebDAV under
 `/remote.php/dav/files/<user>/` with Nextcloud live properties, ETags and locks, read-only or
 scoped app passwords, `status.php`, capabilities and the OCS user endpoints, favorites with the
-`filter-files` REPORT, chunked upload v2, and Login Flow v2 with an explicit consent page. The
-desktop client is tested with `nextcloudcmd` in CI; the mobile apps with
-`docs/mobile-checklist.md`. notify_push, the web admin UI and `gono-cloud rescan` are not there
-yet; see `docs/v1-scope.md` and `acceptance/new-expected-failures.txt`.
+`filter-files` REPORT, chunked upload v2, Login Flow v2 with an explicit consent page,
+notify_push for real-time change notifications, a web admin UI (`admin.enabled`), and
+`gono-cloud rescan` for files changed directly in the data directory. The desktop client is
+tested with `nextcloudcmd` in CI; the mobile apps with `docs/mobile-checklist.md`. Packaging and
+the deployment guide are still to come; see `docs/v1-scope.md`. To put the server behind nginx
+or Caddy, see [`docs/reverse-proxy.md`](docs/reverse-proxy.md).
 
 ## Legacy implementation
 

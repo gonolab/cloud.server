@@ -32,8 +32,8 @@ RUN_LITMUS=1 acceptance/scripts/run-new.sh   # also run litmus
 ```
 
 The script builds `gono-cloud`, runs `init --password-stdin` in a temporary directory, starts
-`serve` on a free loopback port, creates a second user and the credentials below with the
-`user` and `app-password` commands, runs `cargo test`, and compares the failing tests with
+`serve` on a free loopback port with the web admin UI enabled, creates a second user and the
+credentials below with the `user` and `app-password` commands, runs `cargo test`, and compares the failing tests with
 `new-expected-failures.txt`. It exits non-zero when a test fails that is not on the list, when a
 listed test passes, or (with `RUN_LITMUS=1`) when litmus is missing or fails. litmus runs against
 `<base>/remote.php/dav/files/gono/`. CI runs it on Linux with `RUN_LITMUS=1`.

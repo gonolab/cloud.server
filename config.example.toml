@@ -20,8 +20,9 @@ bind = "127.0.0.1:16102"
 allow_non_loopback_bind = false
 
 # Public origin of the server as clients see it: scheme, host and optional port, without a path.
-# Used to build absolute URLs (Login Flow v2, capabilities). It is never guessed from request
-# headers. Required.
+# Used to build absolute URLs (Login Flow v2, capabilities, the notify_push WebSocket) and to
+# check the origin of browser forms. It is never guessed from request headers, so it must match
+# the address users open. See docs/reverse-proxy.md. Required.
 base_url = "https://cloud.example.com"
 
 # Reverse proxies allowed to set the client address through forwarding headers

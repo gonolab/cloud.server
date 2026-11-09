@@ -14,6 +14,7 @@ other's way.
 ├── config.example.toml     Annotated server configuration
 ├── crates/
 │   └── server/
+│       ├── CHANGELOG.md    Changes of each server release
 │       ├── bin/            gono-server: the `gono-cloud` binary (CLI, HTTP routing, Login Flow
 │       │                   and admin UI pages with their templates and assets)
 │       ├── core/           gono-server-core: configuration, SQLite metadata store and
@@ -21,9 +22,13 @@ other's way.
 │       ├── dav/            gono-server-dav: WebDAV file system on top of dav-server
 │       └── nextcloud/      gono-server-nextcloud: status, capabilities, OCS, chunked upload v2,
 │                           Login Flow v2 documents, notify_push hub
+├── packaging/
+│   └── server/             Release archive contents (systemd unit, launchd job, README), the
+│                           install script, the packing script and the install test
 ├── acceptance/             Black-box HTTP acceptance suite, its own workspace (see its README)
 ├── docs/                   Operator and project documentation
-└── vendor/dav-server/      Patched copy of dav-server (see its VENDORED.md)
+├── vendor/dav-server/      Patched copy of dav-server (see its VENDORED.md)
+└── .github/workflows/      ci.yml (checks, tests, install test) and release-server.yml
 ```
 
 Server crates are named `gono-server-*` (the binary crate is plain `gono-server`), so that no
@@ -80,6 +85,21 @@ Today every CI job runs on every push. Once client code exists, the jobs get pat
 Each component is versioned and released on its own, with a prefixed tag: `server-v1.0.0`,
 `desktop-v0.1.0`, `android-v0.1.0`, `ios-v0.1.0`. The tags of the legacy implementation
 (`v0.1.4` and older) stay as they are.
+
+Each component keeps:
+
+- its version: the server's is the workspace version in the root `Cargo.toml`; a client crate
+  or app that is versioned differently sets its own;
+- a changelog next to its code, `crates/server/CHANGELOG.md` for the server (later
+  `apps/desktop/CHANGELOG.md` and so on), with a section per released version;
+- its packaging files under `packaging/<component>/`;
+- a release workflow of its own, `.github/workflows/release-<component>.yml`, that reacts only
+  to its tags, checks that the tag matches the version, takes the release notes from the
+  changelog and creates a draft release for a maintainer to publish.
+
+GitHub marks one release of the repository as "latest", whatever the component. Install
+scripts and documentation therefore name a component's release by its tag
+(`releases/download/server-v1.0.0/...`), never through `releases/latest`.
 
 ### The protocol stays backward compatible
 

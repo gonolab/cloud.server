@@ -27,8 +27,13 @@ listed under "In scope" is deferred until after v1.
   - Favorites through `PROPPATCH` and the `filter-files` REPORT (used by the mobile apps).
 - **Multiple users** with per-app-password mount scopes (`view` or `full`).
 - **notify_push** for real-time change notifications.
-- **Web admin UI**.
-- **CLI**: `init`, `serve`, user and app password management, and a manual `rescan` command.
+- **Web admin UI**: server overview, accounts (create, enable and disable, admin role, display
+  name, web login password, delete) and app passwords.
+- **CLI**: `init`, `serve`, `config check`, user and app password management (including
+  promoting and demoting admins and changing display names), and a manual `rescan` command.
+- **Packaging**: release archives for Linux (x86_64 and aarch64, glibc 2.28 or newer) and
+  macOS (Apple silicon and Intel), a hardened systemd unit, a launchd job and an install script
+  for installs, upgrades and uninstalls (see `docs/deployment.md`).
 
 ## Out of scope for v1
 
@@ -36,6 +41,8 @@ listed under "In scope" is deferred until after v1.
 - Built-in TLS. HTTPS is terminated by a reverse proxy.
 - Automatic detection of changes made directly in the data directory.
 - Migration from the legacy v0.1.x releases. There are no deployments to migrate.
+- Release builds for Linux without glibc (Alpine and other musl distributions), Windows, and a
+  container image. The server builds from source on other Unix systems.
 - Sharing and public links, calendar and contacts, previews and thumbnails, file versions, trash
   bin, and end-to-end encryption.
 
@@ -62,6 +69,29 @@ administrator changes files out of band (SSH, Samba, rsync, ...), they must run
 The server listens on plain HTTP on a loopback address. A reverse proxy (nginx or Caddy)
 terminates HTTPS. The public origin is configured explicitly. Client IP addresses are taken from
 forwarding headers only when the request comes from a configured trusted proxy.
+
+### Packaging
+
+The Linux binaries are linked against glibc 2.28 with cargo-zigbuild instead of being built
+against the release runner's newer glibc, so one build covers RHEL 8, Debian 10, Ubuntu 20.04
+and later. Static musl builds were not added: musl's allocator is markedly slower under
+concurrent load, and the glibc baseline already covers the supported distributions. The Intel
+macOS build is cross-compiled on Apple silicon, which costs one more build job.
+
+The server runs as a dedicated system user (`gono-cloud`, `_gono-cloud` on macOS) that owns the
+database and the data directory. The configuration belongs to root and is only readable by the
+service. The command line refuses to run as root against such an installation, because files it
+created would be unusable for the service.
+
+## Deferred
+
+Decided for after v1:
+
+- Making the failed-login rate limits, the upload, Login Flow and session lifetimes, and the
+  interval at which the server polls the change log for `rescan` changes configurable. They are
+  constants today.
+- Rotating log files. Under systemd the journal rotates the logs; the launchd job on macOS and
+  `logging.file` append to one file without rotation.
 
 ## Open questions
 

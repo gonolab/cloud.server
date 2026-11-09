@@ -2,8 +2,8 @@
 
 Gono Cloud serves plain HTTP on a loopback address and expects a reverse proxy in front of it
 to terminate HTTPS. This guide shows working configurations for **nginx** and **Caddy** and
-explains which Gono Cloud settings have to match the proxy. It covers only the proxy; the
-complete deployment guide (service unit, backups, upgrades) is separate.
+explains which Gono Cloud settings have to match the proxy. It covers only the proxy; installing
+the server as a service, upgrades and backups are in [deployment.md](deployment.md).
 
 ## What the proxy has to do
 
@@ -67,7 +67,8 @@ trusted_proxies = ["127.0.0.1", "::1"]
 Needs nginx 1.25.1 or later for `http2 on;` (with older versions, write
 `listen 443 ssl http2;` instead). Replace the server name, certificate paths and the upstream
 address. The whole acceptance suite, notify_push included, passes through this configuration
-(checked with nginx 1.31, with TLS replaced by a plain local port).
+(checked with nginx 1.31, with TLS replaced by a plain local port; `acceptance/README.md` shows
+how to run the suite through a proxy).
 
 ```nginx
 # WebSocket upgrades: pass "Connection: upgrade" only when the client asked for one.
@@ -171,8 +172,9 @@ Notes:
 
 ## Caddy
 
-For Caddy 2. Caddy obtains and renews the certificate itself. This configuration relies on
-Caddy's documented defaults and has not been run against the acceptance suite yet.
+For Caddy 2. Caddy obtains and renews the certificate itself. The whole acceptance suite,
+notify_push included, and litmus pass through this configuration (checked with Caddy 2.11.9,
+with TLS replaced by a plain local port).
 
 ```caddyfile
 cloud.example.com {

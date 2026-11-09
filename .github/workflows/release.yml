@@ -1,0 +1,316 @@
+name: Release (server)
+
+# Builds the server release when a `server-v<version>` tag is pushed: archives for Linux (x86_64,
+# aarch64) and macOS (Apple silicon, Intel), the install script and SHA256SUMS. The archives are
+# tested with the install script on real systems, signed with build provenance attestations and
+# attached to a draft GitHub release that a maintainer reviews and publishes.
+#
+# Run it by hand (Actions > Release (server) > Run workflow) for a dry run: it builds and tests
+# everything and uploads the release files as a workflow artifact, but attests nothing and
+# creates no release.
+
+on:
+  push:
+    tags:
+      - "server-v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-server-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  # Release builds use exactly this toolchain, so that a tag always builds the same way. Bump it
+  # deliberately (the CI jobs follow stable).
+  RUST_TOOLCHAIN: "1.99.1"
+  # Oldest macOS the binaries run on.
+  MACOSX_DEPLOYMENT_TARGET: "11.0"
+  # Oldest glibc the Linux binaries run on; keep MIN_GLIBC_MINOR in
+  # packaging/server/install.sh and the test image below in sync.
+  GLIBC_VERSION: "2.28"
+
+jobs:
+  prepare:
+    name: Version and release notes
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Check the version
+        id: version
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)"
+          test -n "${version}"
+          if [ "${GITHUB_EVENT_NAME}" = push ] && [ "${GITHUB_REF_NAME}" != "server-v${version}" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match the workspace version ${version}"
+            exit 1
+          fi
+          echo "Version ${version}"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+      # The notes are the version's section of the server changelog plus how to install and
+      # verify. A tag without a changelog section fails here; a dry run only warns.
+      - name: Write the release notes
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          awk -v heading="## [${VERSION}]" '
+            index($0, heading) == 1 { found = 1; next }
+            found && /^## / { exit }
+            found && (printed || NF) { print; printed = 1 }
+          ' crates/server/CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then
+            if [ "${GITHUB_EVENT_NAME}" = push ]; then
+              echo "::error::crates/server/CHANGELOG.md has no section for ${VERSION}"
+              exit 1
+            fi
+            echo "::warning::crates/server/CHANGELOG.md has no section for ${VERSION}"
+            echo "(No changelog section for ${VERSION}.)" > notes.md
+          fi
+          cat >> notes.md <<EOF
+
+          ## Install
+
+          On Linux (systemd, glibc ${GLIBC_VERSION} or newer) or macOS 11 or newer, download \`install.sh\`
+          from this release and run it as root. It downloads the archive for the machine, checks
+          it against \`SHA256SUMS\` and sets the server up as a service:
+
+          \`\`\`sh
+          sudo sh install.sh --base-url https://cloud.example.com
+          \`\`\`
+
+          Run the same script again to upgrade. See \`docs/deployment.md\` for manual installation,
+          the reverse proxy, backups and uninstalling.
+
+          ## Verify
+
+          \`\`\`sh
+          sha256sum --check --ignore-missing SHA256SUMS
+          gh attestation verify gono-cloud-${VERSION}-x86_64-unknown-linux-gnu.tar.gz --repo ${GITHUB_REPOSITORY}
+          \`\`\`
+          EOF
+          cat notes.md
+
+      - name: Upload the release notes
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-notes
+          path: notes.md
+          if-no-files-found: error
+
+  build:
+    name: Build (${{ matrix.target }})
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+          - target: aarch64-apple-darwin
+            runner: macos-15
+          # Cross-compiled on Apple silicon; run under Rosetta when the runner has it.
+          - target: x86_64-apple-darwin
+            runner: macos-15
+    env:
+      TARGET: ${{ matrix.target }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install "${RUST_TOOLCHAIN}" --profile minimal --target "${TARGET}"
+          rustup default "${RUST_TOOLCHAIN}"
+          rustc --version
+
+      # cargo-zigbuild links against an old glibc with zig, so the binaries run on older
+      # distributions than this runner. Both come from PyPI, pinned by hash.
+      - name: Install zig and cargo-zigbuild
+        if: runner.os == 'Linux'
+        run: |
+          python3 -m venv "${RUNNER_TEMP}/zigbuild"
+          "${RUNNER_TEMP}/zigbuild/bin/pip" install --require-hashes --no-deps \
+            -r packaging/server/zigbuild-requirements.txt
+          echo "${RUNNER_TEMP}/zigbuild/bin" >> "${GITHUB_PATH}"
+
+      - name: Build
+        run: |
+          if [ "${RUNNER_OS}" = Linux ]; then
+            cargo zigbuild --release --locked -p gono-server --target "${TARGET}.${GLIBC_VERSION}"
+          else
+            cargo build --release --locked -p gono-server --target "${TARGET}"
+          fi
+
+      - name: Smoke test
+        run: |
+          binary="target/${TARGET}/release/gono-cloud"
+          file "${binary}"
+          if [ "${TARGET}" = x86_64-apple-darwin ]; then
+            if arch -x86_64 /usr/bin/true 2>/dev/null; then
+              arch -x86_64 "${binary}" --version
+            else
+              echo "::warning::Rosetta is not available; the x86_64 macOS binary was not run"
+            fi
+          else
+            "${binary}" --version
+          fi
+
+      - name: Package
+        run: packaging/server/package.sh "${TARGET}" "target/${TARGET}/release/gono-cloud" dist
+
+      - name: Upload the archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: archive-${{ matrix.target }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  checksums:
+    name: Install script and checksums
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Download the archives
+        uses: actions/download-artifact@v8
+        with:
+          pattern: archive-*
+          merge-multiple: true
+          path: dist
+
+      # The attached install script installs this release unless told otherwise.
+      - name: Stamp the install script
+        run: |
+          sed "s/^DEFAULT_VERSION=\"\"\$/DEFAULT_VERSION=\"${VERSION}\"/" packaging/server/install.sh > dist/install.sh
+          grep -qx "DEFAULT_VERSION=\"${VERSION}\"" dist/install.sh
+          chmod 0755 dist/install.sh
+
+      - name: Write SHA256SUMS
+        run: |
+          cd dist
+          set -- *.tar.gz
+          test "$#" -eq 4
+          sha256sum -- "$@" install.sh > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Upload the release files
+        uses: actions/upload-artifact@v7
+        with:
+          name: gono-cloud-server-${{ needs.prepare.outputs.version }}
+          path: dist/
+          if-no-files-found: error
+
+  test-install:
+    name: Install test (${{ matrix.target }})
+    needs: [prepare, checksums]
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+          - target: aarch64-apple-darwin
+            runner: macos-15
+    env:
+      ARCHIVE: dist/gono-cloud-${{ needs.prepare.outputs.version }}-${{ matrix.target }}.tar.gz
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Download the release files
+        uses: actions/download-artifact@v8
+        with:
+          name: gono-cloud-server-${{ needs.prepare.outputs.version }}
+          path: dist
+
+      # The oldest glibc the binaries claim to support: AlmaLinux 8 ships glibc 2.28.
+      - name: Run on glibc 2.28
+        if: runner.os == 'Linux'
+        run: |
+          docker run --rm -v "${PWD}/dist:/dist:ro" -e ARCHIVE="${ARCHIVE#dist/}" almalinux:8 sh -euc '
+            ldd --version | head -n 1
+            cd /tmp
+            tar -xzf "/dist/${ARCHIVE}"
+            dir="/tmp/${ARCHIVE%.tar.gz}"
+            sed -e "s|^data_dir = .*|data_dir = \"/tmp/data\"|" -e "s|^path = \"gono-cloud.db\"|path = \"/tmp/gono-cloud.db\"|" \
+              "${dir}/config.example.toml" > /tmp/config.toml
+            printf "%s\n" "glibc test password" | "${dir}/gono-cloud" --config /tmp/config.toml init --password-stdin
+            "${dir}/gono-cloud" --config /tmp/config.toml serve &
+            server=$!
+            for _ in $(seq 1 30); do
+              if curl -fsS http://127.0.0.1:16102/healthz; then break; fi
+              sleep 1
+            done
+            curl -fsS http://127.0.0.1:16102/status.php
+            kill -TERM "${server}"
+            wait "${server}"
+          '
+
+      - name: Install, upgrade and uninstall
+        run: packaging/server/test-install.sh dist/install.sh "${ARCHIVE}" dist/SHA256SUMS
+
+  publish:
+    name: Draft release
+    if: github.event_name == 'push'
+    needs: [prepare, checksums, test-install]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - name: Download the release files
+        uses: actions/download-artifact@v8
+        with:
+          name: gono-cloud-server-${{ needs.prepare.outputs.version }}
+          path: dist
+
+      - name: Download the release notes
+        uses: actions/download-artifact@v8
+        with:
+          name: release-notes
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-checksums: dist/SHA256SUMS
+
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          prerelease=""
+          case "${VERSION}" in *-*) prerelease="--prerelease" ;; esac
+          # shellcheck disable=SC2086 # empty or one flag
+          gh release create "${TAG}" --repo "${GITHUB_REPOSITORY}" --draft --verify-tag ${prerelease} \
+            --title "Gono Cloud server ${VERSION}" --notes-file notes.md dist/*

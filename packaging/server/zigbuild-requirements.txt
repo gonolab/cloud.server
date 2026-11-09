@@ -1,0 +1,10 @@
+# Linker toolchain for the Linux release builds (.github/workflows/release.yml), pinned by version
+# and hash. cargo-zigbuild links against glibc 2.28 with zig, so the binaries run on older
+# distributions than the build runner. Install with:
+#   pip install --require-hashes --no-deps -r packaging/server/zigbuild-requirements.txt
+ziglang==0.16.0 \
+    --hash=sha256:9fcda73f62b851dd72a54b710ad40a209896db14cfb13649e62191243556342b \
+    --hash=sha256:e27d409812b11e0fb89ed0200cf2e55b6464d43f9461553104e4a4f9a94a1fd5
+cargo-zigbuild==0.23.0 \
+    --hash=sha256:3a2e021435a5e3c8b3a70bfc490580a3af6952185aa5ffb722b005d1fbe000c9 \
+    --hash=sha256:d984af93da7a230606452ef5f6df47e6a081b12dcead8a3e8e5ff024728c94f0

@@ -253,9 +253,166 @@ fn serve_requires_an_initialized_database() {
 
 #[test]
 fn unimplemented_commands_fail_cleanly() {
-    let output = run(gono_cloud().args(["user", "list"]));
+    let instance = Instance::new();
+    assert!(instance.init().status.success());
+    let output = run(&mut instance.command(&["rescan", "--all"]));
     assert_eq!(output.status.code(), Some(1));
     assert!(text(&output.stderr).contains("not implemented yet"));
+}
+
+/// Extracts the value of the `App password: <value>` line.
+fn app_password_from(output: &Output) -> String {
+    let stdout = text(&output.stdout);
+    stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("App password: "))
+        .unwrap_or_else(|| panic!("no app password in output:\n{stdout}"))
+        .to_owned()
+}
+
+#[test]
+fn users_can_be_managed() {
+    let instance = Instance::new();
+    assert!(instance.init().status.success());
+
+    let add = run_with_stdin(
+        &mut instance.command(&[
+            "user",
+            "add",
+            "alice",
+            "--display-name",
+            "Alice Example",
+            "--password-stdin",
+        ]),
+        &format!("{PASSWORD}\n"),
+    );
+    assert!(add.status.success(), "{}", text(&add.stderr));
+    assert!(instance.dir.path().join("data/files/2").is_dir());
+    assert!(instance.dir.path().join("data/uploads/2").is_dir());
+
+    let duplicate = run_with_stdin(
+        &mut instance.command(&["user", "add", "alice", "--password-stdin"]),
+        &format!("{PASSWORD}\n"),
+    );
+    assert!(!duplicate.status.success());
+    assert!(text(&duplicate.stderr).contains("already exists"));
+
+    for args in [
+        &["user", "disable", "alice"][..],
+        &["user", "enable", "alice"],
+    ] {
+        let output = run(&mut instance.command(args));
+        assert!(
+            output.status.success(),
+            "{args:?}: {}",
+            text(&output.stderr)
+        );
+    }
+    let set_password = run_with_stdin(
+        &mut instance.command(&["user", "set-password", "alice", "--password-stdin"]),
+        "another good password\n",
+    );
+    assert!(
+        set_password.status.success(),
+        "{}",
+        text(&set_password.stderr)
+    );
+
+    let list = run(&mut instance.command(&["user", "list"]));
+    assert!(list.status.success());
+    let listing = text(&list.stdout);
+    assert!(listing.contains("Alice Example"), "{listing}");
+    assert!(
+        listing
+            .lines()
+            .any(|line| line.starts_with("1 ") && line.contains("admin"))
+    );
+
+    std::fs::write(instance.dir.path().join("data/files/2/kept.txt"), "kept").unwrap();
+    let delete = run(&mut instance.command(&["user", "delete", "alice"]));
+    assert!(delete.status.success(), "{}", text(&delete.stderr));
+    assert!(!instance.dir.path().join("data/files/2").exists());
+    let deleted: Vec<_> = std::fs::read_dir(instance.dir.path().join("data/deleted"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    assert_eq!(deleted.len(), 1);
+    assert!(deleted[0].join("files/kept.txt").is_file());
+
+    let missing = run(&mut instance.command(&["user", "delete", "alice"]));
+    assert!(!missing.status.success());
+    assert!(text(&missing.stderr).contains("does not exist"));
+}
+
+#[test]
+fn app_passwords_are_shown_once_and_can_be_revoked() {
+    let instance = Instance::new();
+    assert!(instance.init().status.success());
+
+    let add = run(&mut instance.command(&[
+        "app-password",
+        "add",
+        "admin",
+        "--label",
+        "phone",
+        "--scope",
+        "/Photos=/Media/Photos:view",
+        "--scope",
+        "/Inbox=/Inbox:full",
+    ]));
+    assert!(add.status.success(), "{}", text(&add.stderr));
+    let password = app_password_from(&add);
+    assert_eq!(password.len(), 29, "{password}");
+    assert!(!text(&add.stderr).contains(&password));
+
+    let list = run(&mut instance.command(&["app-password", "list", "admin"]));
+    assert!(list.status.success());
+    let listing = text(&list.stdout);
+    assert!(listing.contains("phone"), "{listing}");
+    assert!(listing.contains("/Photos=/Media/Photos:view"), "{listing}");
+    assert!(listing.contains("/Inbox=/Inbox:full"), "{listing}");
+    assert!(
+        !listing.contains(&password),
+        "list must never show the value"
+    );
+
+    let nested = run(&mut instance.command(&[
+        "app-password",
+        "add",
+        "admin",
+        "--label",
+        "nested",
+        "--scope",
+        "/=/:view",
+        "--scope",
+        "/a=/a:full",
+    ]));
+    assert!(!nested.status.success());
+    assert!(
+        text(&nested.stderr).contains("nested"),
+        "{}",
+        text(&nested.stderr)
+    );
+
+    let full = run(&mut instance.command(&["app-password", "add", "admin", "--label", "laptop"]));
+    assert!(full.status.success());
+    assert!(
+        text(&full.stdout).contains("/=/:full"),
+        "{}",
+        text(&full.stdout)
+    );
+
+    let delete = run(&mut instance.command(&["app-password", "delete", "admin", "1"]));
+    assert!(delete.status.success(), "{}", text(&delete.stderr));
+    let again = run(&mut instance.command(&["app-password", "delete", "admin", "1"]));
+    assert!(!again.status.success());
+
+    let db = std::fs::read(instance.db()).unwrap();
+    assert!(
+        !db.windows(password.len())
+            .any(|window| window == password.as_bytes()),
+        "the plaintext app password must not be stored"
+    );
 }
 
 #[cfg(unix)]

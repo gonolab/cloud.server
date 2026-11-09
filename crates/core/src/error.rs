@@ -108,6 +108,28 @@ pub enum Error {
     #[error("user {0} already exists")]
     UserExists(Username),
 
+    /// No account has this name.
+    #[error("user {0} does not exist")]
+    UserNotFound(Username),
+
+    /// An app password label is empty, too long or contains control characters.
+    #[error("invalid label: {0}")]
+    InvalidLabel(&'static str),
+
+    /// The mounts of an app password are inconsistent.
+    #[error("invalid scopes: {0}")]
+    InvalidScopes(String),
+
+    /// A storage path is not acceptable.
+    #[error("invalid path {path:?}: {source}")]
+    InvalidPath {
+        /// The rejected input.
+        path: String,
+        /// Which rule was violated.
+        #[source]
+        source: crate::path::PathError,
+    },
+
     /// `init` was run against a database that already has accounts.
     #[error("the database already contains users; manage accounts with `gono-cloud user`")]
     AlreadyInitialized,

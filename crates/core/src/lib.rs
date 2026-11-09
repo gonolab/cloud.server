@@ -8,8 +8,10 @@
 //! - [`types`]: validated domain types such as [`Username`] and [`Permission`].
 //! - [`password`]: hashing of web login passwords.
 //! - [`users`]: user account storage.
+//! - [`app_passwords`]: device credentials and their mount scopes.
 //! - [`error`]: the domain error types.
 
+pub mod app_passwords;
 pub mod config;
 pub mod db;
 pub mod error;

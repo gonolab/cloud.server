@@ -28,6 +28,9 @@ use crate::{
 /// Connection pool type used throughout Gono Cloud.
 pub type Pool = sqlx::SqlitePool;
 
+/// A write transaction started by [`begin_immediate`].
+pub type Tx = Transaction<'static, Sqlite>;
+
 /// The embedded schema migrations.
 pub static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
@@ -85,7 +88,7 @@ pub async fn migrate(pool: &Pool) -> Result<()> {
 ///
 /// Every operation that writes uses exactly one such transaction. Taking the write lock at
 /// `BEGIN` means a transaction never has to be retried after it has already read data.
-pub async fn begin_immediate(pool: &Pool) -> Result<Transaction<'static, Sqlite>> {
+pub async fn begin_immediate(pool: &Pool) -> Result<Tx> {
     Ok(pool.begin_with("BEGIN IMMEDIATE").await?)
 }
 

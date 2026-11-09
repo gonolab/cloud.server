@@ -12,7 +12,7 @@ use std::process::ExitCode;
 use clap::Parser;
 
 use crate::{
-    cli::{AppPasswordCommand, Cli, Command, ConfigCommand, UserCommand},
+    cli::{Cli, Command, ConfigCommand},
     commands::not_implemented,
 };
 
@@ -34,19 +34,8 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Serve => commands::serve::run(config).await,
         Command::Init(args) => commands::init::run(config, args).await,
         Command::Config(ConfigCommand::Check) => commands::config_check::run(config),
-        Command::User(command) => not_implemented(match command {
-            UserCommand::Add { .. } => "user add",
-            UserCommand::List => "user list",
-            UserCommand::Delete { .. } => "user delete",
-            UserCommand::SetPassword { .. } => "user set-password",
-            UserCommand::Enable { .. } => "user enable",
-            UserCommand::Disable { .. } => "user disable",
-        }),
-        Command::AppPassword(command) => not_implemented(match command {
-            AppPasswordCommand::Add { .. } => "app-password add",
-            AppPasswordCommand::List { .. } => "app-password list",
-            AppPasswordCommand::Delete { .. } => "app-password delete",
-        }),
+        Command::User(command) => commands::user::run(config, command).await,
+        Command::AppPassword(command) => commands::app_password::run(config, command).await,
         Command::Rescan(_) => not_implemented("rescan"),
     }
 }

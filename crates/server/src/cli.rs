@@ -105,7 +105,8 @@ pub enum UserCommand {
 
     /// Delete a user account with its app passwords, sessions and metadata.
     ///
-    /// The user's files in the data directory are left in place.
+    /// The user's files are not deleted: they are moved to `<data_dir>/deleted/` so that a new
+    /// account can never inherit them.
     Delete {
         /// Account to delete.
         username: Username,
@@ -146,8 +147,9 @@ pub enum AppPasswordCommand {
 
         /// Mount a directory of the user's storage into the client's view, as
         /// `<MOUNT>=<STORAGE>:<view|full>`, for example `/Photos=/Media/Photos:view`. Repeat
-        /// for several mounts. Without any `--scope` the app password gets full access to the
-        /// user's whole storage.
+        /// for several mounts; mount paths must not be nested inside each other. Without any
+        /// `--scope` the app password gets full access to the user's whole storage
+        /// (`/=/:full`).
         #[arg(long = "scope", value_name = "MOUNT=STORAGE:PERM")]
         scopes: Vec<ScopeArg>,
 

@@ -48,6 +48,38 @@ jobs:
       - name: Test
         run: cargo test --workspace --locked
 
+  acceptance:
+    name: Acceptance suite and litmus (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Install litmus
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends litmus
+
+      - name: Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            acceptance -> target
+
+      # Builds the server, starts it on a throwaway installation, runs the black-box suite
+      # (failures must match acceptance/new-expected-failures.txt) and then litmus against
+      # /remote.php/dav/files/<user>/. Both must pass.
+      - name: Acceptance suite and litmus
+        env:
+          RUN_LITMUS: "1"
+        run: acceptance/scripts/run-new.sh
+
   msrv:
     name: Minimum supported Rust version
     runs-on: ubuntu-latest

@@ -49,7 +49,7 @@ jobs:
         run: cargo test --workspace --locked
 
   acceptance:
-    name: Acceptance suite and litmus (Linux)
+    name: Acceptance suite, litmus and nextcloudcmd (Linux)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -60,10 +60,11 @@ jobs:
           rustup toolchain install stable --profile minimal
           rustup default stable
 
-      - name: Install litmus
+      - name: Install litmus and nextcloudcmd
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends litmus
+          sudo apt-get install -y --no-install-recommends litmus nextcloud-desktop-cmd
+          nextcloudcmd --version
 
       - name: Cache
         uses: Swatinem/rust-cache@v2
@@ -79,6 +80,12 @@ jobs:
         env:
           RUN_LITMUS: "1"
         run: acceptance/scripts/run-new.sh
+
+      # Syncs two folders with the Nextcloud desktop client's command line tool: first sync,
+      # upload, a deep change from the other device, renames (including case-only), deletes and
+      # a chunked upload.
+      - name: nextcloudcmd sync scenarios
+        run: acceptance/scripts/nextcloudcmd-scenarios.sh
 
   msrv:
     name: Minimum supported Rust version

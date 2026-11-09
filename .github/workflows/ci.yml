@@ -87,6 +87,52 @@ jobs:
       - name: nextcloudcmd sync scenarios
         run: acceptance/scripts/nextcloudcmd-scenarios.sh
 
+  # Packs a debug build the way the release workflow packs release builds and runs the install
+  # script end to end on the runner: refused installs, a fresh install as a systemd service or
+  # launchd job, WebDAV through the service, the CLI's root guard, a graceful stop, an upgrade
+  # and the uninstall. See packaging/server/test-install.sh.
+  install:
+    name: Install script (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Lint the scripts and service files
+        run: |
+          if [ "${RUNNER_OS}" = Linux ]; then
+            command -v shellcheck >/dev/null || sudo apt-get install -y --no-install-recommends shellcheck
+            shellcheck --version | head -n 2
+            shellcheck -s sh packaging/server/*.sh
+          else
+            plutil -lint packaging/server/launchd/*.plist
+          fi
+
+      - name: Build
+        run: cargo build --locked -p gono-server
+
+      - name: Package
+        run: |
+          host="$(rustc -vV | sed -n 's/^host: //p')"
+          packaging/server/package.sh "${host}" target/debug/gono-cloud dist
+
+      - name: Install, upgrade and uninstall
+        run: packaging/server/test-install.sh packaging/server/install.sh dist/*.tar.gz
+
   msrv:
     name: Minimum supported Rust version
     runs-on: ubuntu-latest

@@ -14,7 +14,10 @@ use gono_core::{
     users,
 };
 use gono_dav::{DavService, ScopedFs, locks::SqliteLs};
-use gono_nextcloud::chunking::ChunkedUploads;
+use gono_nextcloud::{
+    chunking::ChunkedUploads,
+    notify_push::{self, Hub, PushSettings},
+};
 use tokio::net::TcpListener;
 
 use super::load_config;
@@ -81,10 +84,31 @@ async fn serve(config: Config) -> anyhow::Result<()> {
         "listening"
     );
 
+    // notify_push announces changes committed from now on; older ones are history.
+    let push = if config.notify_push.enabled {
+        let watermark = MetaStore::new(pool.clone())
+            .latest_change_id()
+            .await
+            .context("read the change log")?;
+        Some(Hub::new(
+            PushSettings::from_config(&config.notify_push),
+            watermark,
+        ))
+    } else {
+        None
+    };
+    let mut meta = MetaStore::new(pool.clone());
+    if let Some(hub) = &push {
+        meta = meta.with_sink(hub.clone());
+    }
+    let feed = push
+        .clone()
+        .map(|hub| tokio::spawn(notify_push::run_feed(hub, meta.clone())));
+
     let dav = dav_service(
         Duration::from_secs(config.webdav.max_lock_timeout_secs),
         layout,
-        &pool,
+        meta,
     )
     .await?;
     let uploads = ChunkedUploads::new(dav.fs().clone(), LockStore::new(pool.clone()));
@@ -112,25 +136,42 @@ async fn serve(config: Config) -> anyhow::Result<()> {
         base_url: Arc::new(config.server.base_url.clone()),
         flow_starts: Arc::new(RateLimiter::new()),
         trusted_proxies: Arc::new(config.server.trusted_proxies.clone()),
+        push: push.clone(),
     };
-    let result = shutdown::serve(listener, app::router(state)).await;
+    let on_signal = {
+        let push = push.clone();
+        move || {
+            if let Some(hub) = push {
+                hub.shut_down();
+            }
+        }
+    };
+    let result = shutdown::serve(listener, app::router(state), on_signal).await;
+    if let Some(hub) = &push {
+        hub.shut_down();
+    }
+    if let Some(feed) = feed {
+        feed.abort();
+    }
     janitor.abort();
     pool.close().await;
     tracing::info!("stopped");
     result
 }
 
-/// Builds the one `DavHandler` of the process and the service around it.
+/// Builds the one `DavHandler` of the process and the service around it. Every metadata
+/// change goes through `meta`, which publishes it to its sink.
 pub(crate) async fn dav_service(
     max_lock_timeout: Duration,
     layout: DataLayout,
-    pool: &db::Pool,
+    meta: MetaStore,
 ) -> anyhow::Result<DavService> {
-    let instance_id = settings::instance_id(pool)
+    let pool = meta.pool().clone();
+    let instance_id = settings::instance_id(&pool)
         .await
         .context("read the instance id")?;
-    let fs = ScopedFs::new(layout, MetaStore::new(pool.clone()), instance_id);
-    let locks = SqliteLs::new(LockStore::new(pool.clone()), max_lock_timeout);
+    let fs = ScopedFs::new(layout, meta, instance_id);
+    let locks = SqliteLs::new(LockStore::new(pool), max_lock_timeout);
     // REPORT (filter-files) is served outside dav-server; CalDAV and CardDAV are not offered.
     let mut methods = DavMethodSet::all();
     for method in [

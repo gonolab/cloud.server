@@ -8,7 +8,8 @@
 //! - [`login_flow`]: Login Flow v2 protocol documents and client naming. The sign-in and
 //!   consent pages are part of the server's web UI.
 //! - [`chunking`]: chunked upload v2 under `/remote.php/dav/uploads/`.
-//! - [`notify_push`]: real-time change notifications over WebSocket (not implemented yet).
+//! - [`notify_push`]: real-time change notifications over WebSocket: the hub that routes
+//!   change events, scope filtering, debouncing and the protocol frames.
 //!
 //! The HTTP routing and authentication live in the server crate; the services here take an
 //! authenticated identity and `http` requests, like `gono_dav::DavService`.

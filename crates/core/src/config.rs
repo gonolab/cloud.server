@@ -175,17 +175,20 @@ pub struct NotifyPushConfig {
     /// Advertise and serve the notify_push WebSocket endpoint.
     pub enabled: bool,
 
-    /// Interval between WebSocket pings sent to idle clients, in seconds.
+    /// Interval between WebSocket pings, in seconds. A connection that has sent nothing (not
+    /// even the pong) by the next ping is closed, and every ping also re-checks that the
+    /// connection's app password is still valid.
     pub ping_interval_secs: u64,
 
     /// Time a freshly opened WebSocket has to authenticate, in seconds.
     pub auth_timeout_secs: u64,
 
-    /// Lifetime of a pre-auth token handed out over OCS, in seconds.
+    /// Lifetime of a pre-auth token handed out by the pre-auth endpoint, in seconds.
     pub pre_auth_ttl_secs: u64,
 
-    /// Minimum interval between two file change notifications sent to the same user, in
-    /// seconds. Bursts of changes inside the window are coalesced into one notification.
+    /// Debounce interval of change notifications, in seconds: two notifications of the same
+    /// kind on one connection are at least this far apart, every change in between is merged
+    /// into the next one, and no change waits longer than this before it is announced.
     pub debounce_secs: u64,
 
     /// Maximum number of concurrent WebSocket connections per user.

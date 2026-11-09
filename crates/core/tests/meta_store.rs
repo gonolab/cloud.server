@@ -618,3 +618,84 @@ async fn favorites_are_listed_by_subtree() {
             .unwrap()
     ));
 }
+
+/// Records the published events.
+#[derive(Debug, Default)]
+struct Recorder(std::sync::Mutex<Vec<gono_core::meta::ChangeEvent>>);
+
+impl gono_core::meta::ChangeSink for Recorder {
+    fn publish(&self, event: &gono_core::meta::ChangeEvent) {
+        self.0.lock().unwrap().push(event.clone());
+    }
+}
+
+#[tokio::test]
+async fn every_logged_change_is_published_after_the_commit() {
+    use gono_core::meta::ChangeOperation;
+
+    let fixture = fixture().await;
+    let recorder = std::sync::Arc::new(Recorder::default());
+    let store = fixture.store.clone().with_sink(recorder.clone());
+    let owner = fixture.owner;
+    let before = store.latest_change_id().await.unwrap();
+
+    let dir = store.record_mkdir(owner, &p("d"), 1).await.unwrap();
+    let file = store
+        .record_write(owner, &p("d/f.txt"), file_stat(3))
+        .await
+        .unwrap();
+    store
+        .record_write(owner, &p("d/f.txt"), file_stat(4))
+        .await
+        .unwrap();
+    store
+        .record_copy(owner, &p("d"), &p("e"), &[(RelPath::root(), dir_stat())])
+        .await
+        .unwrap();
+    store
+        .record_move(owner, &p("e"), &p("g"), dir_stat())
+        .await
+        .unwrap();
+    store.record_delete(owner, &p("d")).await.unwrap();
+    // Not content changes: nothing is published.
+    store.set_favorite(file.id, true).await.unwrap();
+
+    let published = recorder.0.lock().unwrap().clone();
+    let summary: Vec<(ChangeOperation, &str, Option<&str>)> = published
+        .iter()
+        .map(|event| {
+            (
+                event.operation,
+                event.rel_path.as_str(),
+                event.old_rel_path.as_ref().map(RelPath::as_str),
+            )
+        })
+        .collect();
+    assert_eq!(
+        summary,
+        [
+            (ChangeOperation::Create, "d", None),
+            (ChangeOperation::Create, "d/f.txt", None),
+            (ChangeOperation::Modify, "d/f.txt", None),
+            (ChangeOperation::Create, "e", None),
+            (ChangeOperation::Move, "g", Some("e")),
+            (ChangeOperation::Delete, "d", None),
+        ]
+    );
+    // The delete carries the id the directory had: its row is gone by now.
+    assert_eq!(published[5].file_id, dir.id);
+    assert!(store.get(owner, &p("d")).await.unwrap().is_none());
+    assert!(published.iter().all(|event| event.owner_id == owner));
+
+    // The change log holds the same events, in the same order, with the same ids.
+    let logged = store.changes_since(before, 100).await.unwrap();
+    assert_eq!(logged, published);
+    assert_eq!(
+        store.latest_change_id().await.unwrap(),
+        published.last().unwrap().id
+    );
+    assert_eq!(
+        store.changes_since(before, 2).await.unwrap(),
+        published[..2]
+    );
+}

@@ -25,6 +25,7 @@ use axum::{
 use gono_core::{PRODUCT_NAME, app_passwords};
 use gono_dav::Identity;
 use gono_nextcloud::{
+    notify_push,
     ocs::{self, ApiVersion, Format, Outcome, Reply},
     status,
 };
@@ -128,7 +129,11 @@ pub async fn ocs(
 
     match endpoint {
         Endpoint::Capabilities => {
-            let data = ocs::capabilities(PRODUCT_NAME, SERVER_VERSION);
+            let push = state
+                .push
+                .as_ref()
+                .map(|_| notify_push::Endpoints::new(&state.base_url));
+            let data = ocs::capabilities(PRODUCT_NAME, SERVER_VERSION, push.as_ref());
             return reply(version, format, &Outcome::Ok, data);
         }
         Endpoint::Unknown => return reply(version, format, &Outcome::NotFound, json!([])),

@@ -27,7 +27,7 @@ dav-server = { version = "=0.11.0", default-features = false, features = ["local
 
 anyhow = "1.0.100"
 argon2 = "0.6.0"
-axum = "0.8.9"
+axum = { version = "0.8.9", features = ["ws"] }
 base64 = "0.22.1"
 bytes = "1.12.1"
 clap = { version = "4.6.0", features = ["derive", "env", "wrap_help"] }
@@ -55,6 +55,7 @@ sqlx = { version = "0.9.0", default-features = false, features = [
 tempfile = "3.27.0"
 thiserror = "2.0.17"
 tokio = "1.54.0"
+tokio-tungstenite = "0.29.0"
 toml = "1.2.0"
 tower-layer = "0.3.3"
 tower-service = "0.3.3"

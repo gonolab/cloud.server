@@ -2,24 +2,9 @@
 # Format: <test binary>::<test name>. scripts/run-new.sh fails when a test fails that is not on
 # this list, or when a listed test passes, so remove entries as the features land.
 #
-# State: phase 3 (the Nextcloud protocol surface) is done. Every `webdav`, `scope`, `nextcloud`
-# and `login_flow` test passes, including the regression tests of legacy defects 1-5 and 7.
-# What remains belongs to phase 4: notify_push and the web admin UI.
-
-# Phase 4: notify_push. The change log is written, but there is no WebSocket endpoint and no
-# capability yet.
-notify_push::capabilities_advertise_notify_push
-notify_push::websocket_authenticates_with_an_app_password
-notify_push::websocket_rejects_bad_credentials
-notify_push::pre_auth_requires_authentication
-notify_push::pre_auth_token_is_single_use
-notify_push::put_triggers_a_file_notification
-notify_push::mkcol_copy_and_move_trigger_file_notifications
-notify_push::chunked_upload_triggers_a_file_notification
-notify_push::listen_notify_file_id_reports_the_changed_file
-notify_push::changes_are_not_pushed_to_other_users
-# Defect 6 (a standalone DELETE is not pushed) belongs to the notify_push implementation.
-notify_push::regression_delete_triggers_a_file_notification
+# State: phase 3 (the Nextcloud protocol surface) and notify_push are done. Every `webdav`,
+# `scope`, `nextcloud`, `login_flow` and `notify_push` test passes, including the regression
+# tests of legacy defects 1-7. What remains belongs to phase 4: the web admin UI.
 
 # Phase 4: the web admin UI does not exist yet. The tests that only check that app passwords
 # are refused pass already, because nothing is served at the admin path.

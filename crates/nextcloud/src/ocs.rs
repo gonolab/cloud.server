@@ -1,7 +1,8 @@
 //! OCS API documents (`/ocs/v1.php/...` and `/ocs/v2.php/...`).
 //!
 //! - [`capabilities`]: what the server implements, so clients enable exactly those features:
-//!   chunked upload v2, and no sharing, versions, trash bin, notifications or notify_push.
+//!   chunked upload v2 and notify_push (when enabled), and no sharing, versions, trash bin or
+//!   notifications.
 //! - [`user`]: the profile of the signed-in user (`/cloud/user`, `/cloud/users/<id>`), which
 //!   clients read at startup for the display name and the quota.
 //! - [`Reply`]: the OCS envelope (`ocs.meta` + `ocs.data`) in JSON (`format=json` or
@@ -204,13 +205,20 @@ fn escape(text: &str) -> String {
 /// - `files.bigfilechunking = false`: the old `<name>-chunking-<id>-<n>-<i>` PUT chunking does
 ///   not exist; clients that cannot use chunking v2 upload in one PUT.
 /// - `files_sharing.api_enabled = false`, no `notifications`, no `user_status`, no versions or
-///   trash bin, no `notify_push` (phase 4).
+///   trash bin.
+/// - `notify_push` with the WebSocket and pre-auth URLs when the push endpoint is enabled.
+///   `type` lists only `files`: there are no activities or notifications to announce, so
+///   clients keep their own behavior for those.
 /// - Login Flow v2 has no Nextcloud capability: clients use it for every server from version 16
 ///   on, which [`status::NEXTCLOUD_VERSION`] satisfies. `gono_cloud.login_flow_v2` states it
 ///   explicitly for the Gono client.
-pub fn capabilities(product_name: &str, server_version: &str) -> Value {
+pub fn capabilities(
+    product_name: &str,
+    server_version: &str,
+    push: Option<&crate::notify_push::Endpoints>,
+) -> Value {
     let (major, minor, micro) = status::NEXTCLOUD_VERSION;
-    json!({
+    let mut document = json!({
         "version": {
             "major": major,
             "minor": minor,
@@ -249,9 +257,20 @@ pub fn capabilities(product_name: &str, server_version: &str) -> Value {
                 "login_flow_v2": true,
                 "chunking_v2": true,
                 "filter_files_favorites": true,
+                "notify_push": push.is_some(),
             },
         },
-    })
+    });
+    if let Some(push) = push {
+        document["capabilities"]["notify_push"] = json!({
+            "type": ["files"],
+            "endpoints": {
+                "websocket": push.websocket,
+                "pre_auth": push.pre_auth,
+            },
+        });
+    }
+    document
 }
 
 /// What [`user`] reports about the signed-in user.
@@ -387,7 +406,7 @@ mod tests {
 
     #[test]
     fn capabilities_advertise_chunking_and_nothing_unimplemented() {
-        let document = capabilities("Gono Cloud", "1.0.0");
+        let document = capabilities("Gono Cloud", "1.0.0", None);
         let capabilities = &document["capabilities"];
         assert_eq!(capabilities["dav"]["chunking"], "1.0");
         assert_eq!(capabilities["files"]["bigfilechunking"], false);
@@ -397,6 +416,26 @@ mod tests {
         }
         assert_eq!(document["version"]["string"], status::version_string());
         assert_eq!(capabilities["gono_cloud"]["login_flow_v2"], true);
+        assert_eq!(capabilities["gono_cloud"]["notify_push"], false);
+    }
+
+    #[test]
+    fn capabilities_advertise_notify_push_when_enabled() {
+        let endpoints = crate::notify_push::Endpoints::new(
+            &url::Url::parse("https://cloud.example.com").unwrap(),
+        );
+        let document = capabilities("Gono Cloud", "1.0.0", Some(&endpoints));
+        let push = &document["capabilities"]["notify_push"];
+        assert_eq!(push["type"], serde_json::json!(["files"]));
+        assert_eq!(
+            push["endpoints"]["websocket"],
+            "wss://cloud.example.com/push/ws"
+        );
+        assert_eq!(
+            push["endpoints"]["pre_auth"],
+            "https://cloud.example.com/index.php/apps/notify_push/pre_auth"
+        );
+        assert_eq!(document["capabilities"]["gono_cloud"]["notify_push"], true);
     }
 
     #[test]

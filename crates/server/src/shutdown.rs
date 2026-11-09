@@ -12,7 +12,14 @@ pub const GRACE_PERIOD: Duration = Duration::from_secs(30);
 
 /// Serves `app` until a shutdown signal arrives, then stops accepting connections and waits up
 /// to [`GRACE_PERIOD`] for in-flight requests to finish.
-pub async fn serve(listener: TcpListener, app: Router) -> anyhow::Result<()> {
+///
+/// `on_signal` runs as soon as the signal arrives, to end long-lived connections (notify_push
+/// WebSockets) that would otherwise hold the shutdown up.
+pub async fn serve(
+    listener: TcpListener,
+    app: Router,
+    on_signal: impl FnOnce() + Send + 'static,
+) -> anyhow::Result<()> {
     let signalled = Arc::new(Notify::new());
     let notify = Arc::clone(&signalled);
 
@@ -26,6 +33,7 @@ pub async fn serve(listener: TcpListener, app: Router) -> anyhow::Result<()> {
             grace_period_secs = GRACE_PERIOD.as_secs(),
             "shutting down; waiting for in-flight requests"
         );
+        on_signal();
         notify.notify_one();
     })
     .into_future();

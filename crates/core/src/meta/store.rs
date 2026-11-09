@@ -24,13 +24,16 @@
 //! All paths are [`RelPath`]s of one owner. Subtree operations select descendants with the
 //! half-open range from [`super::descendant_bounds`], never with `LIKE`.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use rand::RngExt as _;
 use sha2::{Digest, Sha256};
 use sqlx::FromRow;
 
-use super::descendant_bounds;
+use super::{
+    changes::{ChangeEvent, ChangeOperation, ChangeSink},
+    descendant_bounds,
+};
 use crate::{
     db::{self, Pool, Tx},
     error::Result,
@@ -160,17 +163,76 @@ fn to_db_size(size: u64) -> i64 {
 #[derive(Debug, Clone)]
 pub struct MetaStore {
     pool: Pool,
+    /// Receives the event of every committed change.
+    sink: Option<Arc<dyn ChangeSink>>,
 }
 
 impl MetaStore {
-    /// Wraps a connection pool.
+    /// Wraps a connection pool. Changes are logged but not published anywhere.
     pub fn new(pool: Pool) -> Self {
-        Self { pool }
+        Self { pool, sink: None }
+    }
+
+    /// Publishes the event of every committed change to `sink` (see [`super::changes`]).
+    #[must_use]
+    pub fn with_sink(mut self, sink: Arc<dyn ChangeSink>) -> Self {
+        self.sink = Some(sink);
+        self
     }
 
     /// The underlying pool.
     pub fn pool(&self) -> &Pool {
         &self.pool
+    }
+
+    /// Hands committed changes to the sink, in commit order.
+    fn publish(&self, events: &[ChangeEvent]) {
+        if let Some(sink) = &self.sink {
+            for event in events {
+                sink.publish(event);
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // Change log
+    // -----------------------------------------------------------------------------------------
+
+    /// The id of the newest `change_log` row, or 0 when the log is empty.
+    pub async fn latest_change_id(&self) -> Result<i64> {
+        Ok(
+            sqlx::query_scalar("SELECT COALESCE(MAX(id), 0) FROM change_log")
+                .fetch_one(&self.pool)
+                .await?,
+        )
+    }
+
+    /// Up to `limit` logged changes with an id greater than `after`, oldest first.
+    pub async fn changes_since(&self, after: i64, limit: u32) -> Result<Vec<ChangeEvent>> {
+        let rows: Vec<(i64, i64, i64, String, Option<String>, String)> = sqlx::query_as(
+            "SELECT id, owner_id, file_id, rel_path, old_rel_path, operation FROM change_log \
+             WHERE id > ?1 ORDER BY id LIMIT ?2",
+        )
+        .bind(after)
+        .bind(i64::from(limit))
+        .fetch_all(&self.pool)
+        .await?;
+        let mut events = Vec::with_capacity(rows.len());
+        for (id, owner_id, file_id, rel_path, old_rel_path, operation) in rows {
+            let Ok(operation) = operation.parse() else {
+                // The CHECK constraint makes this impossible; skip rather than fail the reader.
+                continue;
+            };
+            events.push(ChangeEvent {
+                id,
+                owner_id,
+                file_id,
+                rel_path: RelPath::from_db(rel_path),
+                old_rel_path: old_rel_path.map(RelPath::from_db),
+                operation,
+            });
+        }
+        Ok(events)
     }
 
     // -----------------------------------------------------------------------------------------
@@ -373,18 +435,23 @@ impl MetaStore {
                     size: stat.size,
                     ..old
                 };
-                (row, delta, "modify")
+                (row, delta, ChangeOperation::Modify)
             }
             stale => {
                 let removed = delete_subtree(&mut tx, owner, rel).await?;
                 let stale_size = stale.map_or(removed, |row| to_db_size(row.size));
                 let row = insert(&mut tx, owner, rel, stat, Etag::Written).await?;
-                (row, to_db_size(stat.size) - stale_size, "create")
+                (
+                    row,
+                    to_db_size(stat.size) - stale_size,
+                    ChangeOperation::Create,
+                )
             }
         };
         propagate(&mut tx, owner, rel, delta).await?;
-        log_change(&mut tx, owner, row.id, rel, None, operation).await?;
+        let event = log_change(&mut tx, owner, row.id, rel, None, operation).await?;
         tx.commit().await?;
+        self.publish(&[event]);
         Ok(row)
     }
 
@@ -401,8 +468,9 @@ impl MetaStore {
         };
         let row = insert(&mut tx, owner, rel, stat, Etag::Written).await?;
         propagate(&mut tx, owner, rel, -stale_size).await?;
-        log_change(&mut tx, owner, row.id, rel, None, "create").await?;
+        let event = log_change(&mut tx, owner, row.id, rel, None, ChangeOperation::Create).await?;
         tx.commit().await?;
+        self.publish(&[event]);
         Ok(row)
     }
 
@@ -415,10 +483,14 @@ impl MetaStore {
         let removed = delete_subtree(&mut tx, owner, rel).await?;
         let size = row.as_ref().map_or(removed, |row| to_db_size(row.size));
         propagate(&mut tx, owner, rel, -size).await?;
+        let mut events = Vec::new();
         if let Some(row) = &row {
-            log_change(&mut tx, owner, row.id, rel, None, "delete").await?;
+            events.push(
+                log_change(&mut tx, owner, row.id, rel, None, ChangeOperation::Delete).await?,
+            );
         }
         tx.commit().await?;
+        self.publish(&events);
         Ok(row)
     }
 
@@ -446,7 +518,7 @@ impl MetaStore {
         let replaced_size = replaced.map_or(replaced_removed, |row| to_db_size(row.size));
         propagate(&mut tx, owner, to, -replaced_size).await?;
 
-        let row = match select(&mut tx, owner, from).await? {
+        let (row, event) = match select(&mut tx, owner, from).await? {
             Some(source) => {
                 sqlx::query("UPDATE files SET rel_path = ?3 WHERE owner_id = ?1 AND rel_path = ?2")
                     .bind(owner)
@@ -472,21 +544,32 @@ impl MetaStore {
                 let size = to_db_size(source.size);
                 propagate(&mut tx, owner, from, -size).await?;
                 propagate(&mut tx, owner, to, size).await?;
-                log_change(&mut tx, owner, source.id, to, Some(from), "move").await?;
-                FileRow {
+                let event = log_change(
+                    &mut tx,
+                    owner,
+                    source.id,
+                    to,
+                    Some(from),
+                    ChangeOperation::Move,
+                )
+                .await?;
+                let row = FileRow {
                     rel_path: to.clone(),
                     ..source
-                }
+                };
+                (row, event)
             }
             None => {
                 let row = insert(&mut tx, owner, to, stat, Etag::Derived).await?;
                 propagate(&mut tx, owner, from, 0).await?;
                 propagate(&mut tx, owner, to, to_db_size(row.size)).await?;
-                log_change(&mut tx, owner, row.id, to, None, "create").await?;
-                row
+                let event =
+                    log_change(&mut tx, owner, row.id, to, None, ChangeOperation::Create).await?;
+                (row, event)
             }
         };
         tx.commit().await?;
+        self.publish(&[event]);
         Ok(row)
     }
 
@@ -554,8 +637,9 @@ impl MetaStore {
         }
         let top = top.expect("entries is not empty");
         propagate(&mut tx, owner, to, to_db_size(top.size) - replaced_size).await?;
-        log_change(&mut tx, owner, top.id, to, None, "create").await?;
+        let event = log_change(&mut tx, owner, top.id, to, None, ChangeOperation::Create).await?;
         tx.commit().await?;
+        self.publish(&[event]);
         Ok(top)
     }
 
@@ -725,25 +809,33 @@ async fn propagate(tx: &mut Tx, owner: i64, rel: &RelPath, delta: i64) -> Result
     Ok(())
 }
 
+/// Appends a `change_log` row and returns the event to publish once the transaction commits.
 async fn log_change(
     tx: &mut Tx,
     owner: i64,
     file_id: i64,
     rel: &RelPath,
     old: Option<&RelPath>,
-    operation: &str,
-) -> Result<()> {
-    sqlx::query(
+    operation: ChangeOperation,
+) -> Result<ChangeEvent> {
+    let id: i64 = sqlx::query_scalar(
         "INSERT INTO change_log (owner_id, file_id, rel_path, old_rel_path, operation, \
-         changed_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+         changed_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6) RETURNING id",
     )
     .bind(owner)
     .bind(file_id)
     .bind(rel.as_str())
     .bind(old.map(RelPath::as_str))
-    .bind(operation)
+    .bind(operation.as_str())
     .bind(db::unix_now())
-    .execute(&mut **tx)
+    .fetch_one(&mut **tx)
     .await?;
-    Ok(())
+    Ok(ChangeEvent {
+        id,
+        owner_id: owner,
+        file_id,
+        rel_path: rel.clone(),
+        old_rel_path: old.cloned(),
+        operation,
+    })
 }

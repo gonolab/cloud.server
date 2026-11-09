@@ -73,11 +73,23 @@ impl Authenticator {
         let Some((username, password)) = basic_credentials(headers) else {
             return AuthOutcome::Missing;
         };
+        self.authenticate_credentials(client, &username, &password)
+            .await
+    }
+
+    /// Authenticates a username and app password sent by `client` some other way than a
+    /// Basic header (the notify_push WebSocket), with the same rate limiting.
+    pub async fn authenticate_credentials(
+        &self,
+        client: IpAddr,
+        username: &str,
+        password: &SecretString,
+    ) -> AuthOutcome {
         if let Some(wait) = self.limiter.check(client) {
             return AuthOutcome::RateLimited(wait);
         }
         let now = db::unix_now();
-        match app_passwords::authenticate(&self.pool, &username, &password, now).await {
+        match app_passwords::authenticate(&self.pool, username, password, now).await {
             Ok(Some(device)) => {
                 self.record_use(device.app_password_id, device.last_used_at, now);
                 AuthOutcome::Authenticated(Identity::from_device(device))

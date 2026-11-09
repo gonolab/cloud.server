@@ -348,6 +348,21 @@ pub async fn authenticate(
     }))
 }
 
+/// Whether app password `id` can still authenticate at `now`: it exists, has not expired, and
+/// its account is enabled. Long-lived connections (notify_push) check this periodically, so
+/// revoking an app password or disabling an account also ends them.
+pub async fn is_active(pool: &Pool, id: i64, now: i64) -> Result<bool> {
+    let active: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM app_passwords a JOIN users u ON u.id = a.user_id \
+         WHERE a.id = ?1 AND u.enabled = 1 AND (a.expires_at IS NULL OR a.expires_at > ?2)",
+    )
+    .bind(id)
+    .bind(now)
+    .fetch_optional(pool)
+    .await?;
+    Ok(active.is_some())
+}
+
 /// Records that an app password was used at `now`.
 ///
 /// Callers throttle this (see the server's authenticator); the statement itself only writes

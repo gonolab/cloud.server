@@ -70,20 +70,23 @@ level = "info"
 # file = "logs/gono-cloud.log"
 
 [notify_push]
-# Real-time change notifications for Nextcloud clients over WebSocket. Default: true.
+# Real-time change notifications for Nextcloud clients over WebSocket (`/push/ws`, advertised in
+# the capabilities). The reverse proxy must pass WebSocket upgrades through; see
+# docs/reverse-proxy.md. All values below must be at least 1. Default: true.
 enabled = true
 
-# Seconds between pings on idle connections. Default: 30.
+# Seconds between pings. A connection that has not answered by the next ping is closed, and
+# each ping re-checks that the connection's app password is still valid. Default: 30.
 ping_interval_secs = 30
 
 # Seconds a new connection has to authenticate before it is closed. Default: 15.
 auth_timeout_secs = 15
 
-# Lifetime of a pre-auth token handed out over OCS, in seconds. Default: 15.
+# Lifetime of a pre-auth token, in seconds. Default: 15.
 pre_auth_ttl_secs = 15
 
-# Minimum seconds between two change notifications to the same user; changes inside the window
-# are coalesced. Default: 5.
+# Debounce interval in seconds: notifications to one connection are at least this far apart,
+# changes in between are merged into one, and no change waits longer than this. Default: 5.
 debounce_secs = 5
 
 # Maximum concurrent connections per user. Default: 64.

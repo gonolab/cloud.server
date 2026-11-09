@@ -11,6 +11,8 @@
 //! - `/remote.php/dav/uploads/<user>/...`: Nextcloud chunked upload v2
 //!   ([`gono_nextcloud::chunking`]). Other users' namespaces and app passwords without any
 //!   writable mount are refused with 403 before the protocol is looked at.
+//! - notify_push, when `notify_push.enabled`: the WebSocket at `/push/ws` and the pre-auth
+//!   endpoint `/index.php/apps/notify_push/pre_auth`: see [`crate::notify_push`].
 //!
 //! Every response to a WebDAV request passes [`OcHeadersLayer`], which adds the `OC-ETag`,
 //! `OC-FileId` and `X-NC-Permissions` headers, and every request is logged once with secrets
@@ -29,14 +31,17 @@ use axum::{
 };
 use gono_core::db;
 use gono_dav::{DavService, Identity, OcHeadersLayer, report, resolve::FILES_ROOT};
-use gono_nextcloud::chunking::{ChunkedUploads, UPLOADS_ROOT};
+use gono_nextcloud::{
+    chunking::{ChunkedUploads, UPLOADS_ROOT},
+    notify_push::{Hub, PRE_AUTH_PATH, WEBSOCKET_PATH},
+};
 use ipnet::IpNet;
 use url::Url;
 
 use crate::{
     auth::{AuthOutcome, Authenticator, basic_challenge},
     client_ip::client_ip,
-    login_flow, nextcloud,
+    login_flow, nextcloud, notify_push,
     ratelimit::RateLimiter,
     request_log,
     web::Web,
@@ -62,6 +67,8 @@ pub struct AppState {
     pub flow_starts: Arc<RateLimiter>,
     /// Peers whose forwarding headers are trusted.
     pub trusted_proxies: Arc<Vec<IpNet>>,
+    /// The notify_push hub, when `notify_push.enabled`.
+    pub push: Option<Arc<Hub>>,
 }
 
 /// Builds the application router.
@@ -93,10 +100,17 @@ pub fn router(state: AppState) -> Router {
             "/login/v2/flow/{token}",
             get(login_flow::page).post(login_flow::submit),
         );
-    Router::new()
+    let mut router = Router::new()
         .route("/healthz", get(healthz))
         .merge(nextcloud)
-        .merge(dav)
+        .merge(dav);
+    if state.push.is_some() {
+        router = router
+            .route(WEBSOCKET_PATH, get(notify_push::websocket))
+            .route(PRE_AUTH_PATH, post(notify_push::pre_auth))
+            .route("/apps/notify_push/pre_auth", post(notify_push::pre_auth));
+    }
+    router
         .layer(middleware::from_fn_with_state(
             state.clone(),
             request_log::log_requests,
@@ -315,9 +329,13 @@ mod tests {
         let (_, view) = app_passwords::create(&pool, ids[0], "view", vec![view_scope], None)
             .await
             .unwrap();
-        let dav = crate::commands::serve::dav_service(Duration::from_secs(600), layout, &pool)
-            .await
-            .unwrap();
+        let dav = crate::commands::serve::dav_service(
+            Duration::from_secs(600),
+            layout,
+            gono_core::meta::MetaStore::new(pool.clone()),
+        )
+        .await
+        .unwrap();
         let uploads = ChunkedUploads::new(
             dav.fs().clone(),
             gono_core::locks::LockStore::new(pool.clone()),
@@ -333,6 +351,7 @@ mod tests {
             base_url: Arc::new(base_url),
             flow_starts: Arc::new(RateLimiter::new()),
             trusted_proxies: Arc::new(Vec::new()),
+            push: None,
         };
         Fixture {
             dir,

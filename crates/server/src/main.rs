@@ -9,6 +9,7 @@ mod janitor;
 mod logging;
 mod login_flow;
 mod nextcloud;
+mod notify_push;
 mod password_input;
 mod ratelimit;
 mod request_log;

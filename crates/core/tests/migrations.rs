@@ -18,10 +18,16 @@ use secrecy::SecretString;
 /// test databases have applied it, and sqlx refuses to open them if the file changes. If this
 /// test fails because you edited one of these files, revert the edit and add a new migration
 /// instead. Pin every new migration here in the change that adds it.
-const RELEASED_MIGRATIONS: &[(i64, &str)] = &[(
-    1,
-    "b210dcedf8f0e378c06e55b33997812a9f78bdfdeef12d030f3ab88d6d0b65e75c85daace5264adbf6f2ccbba65b8124",
-)];
+const RELEASED_MIGRATIONS: &[(i64, &str)] = &[
+    (
+        1,
+        "b210dcedf8f0e378c06e55b33997812a9f78bdfdeef12d030f3ab88d6d0b65e75c85daace5264adbf6f2ccbba65b8124",
+    ),
+    (
+        2,
+        "7a726883aaa0e53361d7943f3e4a273276b287f2c5a25eba4fead40e7d23ba788ce8fadede635c3433f04a3e41cdcaa3",
+    ),
+];
 
 fn db_config(dir: &Path) -> DbConfig {
     DbConfig {
@@ -77,6 +83,7 @@ async fn migrations_apply_to_an_empty_database() {
             "files",
             "locks",
             "login_flows",
+            "settings",
             "upload_sessions",
             "users",
             "web_sessions",
@@ -327,6 +334,21 @@ async fn rel_path_ranges_select_exactly_the_subtree() {
                 || detail.contains("USING INDEX")),
         "{plan:?}"
     );
+}
+
+#[tokio::test]
+async fn instance_id_is_generated_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let pool = fresh_database(dir.path()).await;
+    let id = gono_core::settings::instance_id(&pool).await.unwrap();
+    assert_eq!(id.len(), 12, "{id}");
+    assert!(id.starts_with("oc"), "{id}");
+    assert!(
+        id.bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+    );
+    db::migrate(&pool).await.unwrap();
+    assert_eq!(gono_core::settings::instance_id(&pool).await.unwrap(), id);
 }
 
 #[tokio::test]

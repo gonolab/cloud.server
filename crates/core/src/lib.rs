@@ -5,6 +5,7 @@
 //! - [`meta`]: rules shared by every query on path-keyed metadata.
 //! - [`path`]: [`RelPath`], the validated and NFC-normalized form of storage paths.
 //! - [`storage`]: layout of the data directory.
+//! - [`settings`]: server-wide generated settings such as the instance id.
 //! - [`types`]: validated domain types such as [`Username`] and [`Permission`].
 //! - [`password`]: hashing of web login passwords.
 //! - [`users`]: user account storage.
@@ -18,6 +19,7 @@ pub mod error;
 pub mod meta;
 pub mod password;
 pub mod path;
+pub mod settings;
 pub mod storage;
 pub mod types;
 pub mod users;

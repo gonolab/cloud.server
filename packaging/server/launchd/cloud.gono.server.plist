@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd job of the Gono Cloud server.
+
+  Installed by packaging/server/install.sh as /Library/LaunchDaemons/cloud.gono.server.plist
+  (owned by root:wheel, mode 0644) and replaced on upgrades. See docs/deployment.md.
+
+  Layout: binary /usr/local/bin/gono-cloud, configuration /usr/local/etc/gono-cloud/config.toml,
+  database and files under /usr/local/var/gono-cloud, log /usr/local/var/log/gono-cloud, owned
+  by the hidden system user _gono-cloud.
+
+  Manage it with:
+    sudo launchctl kickstart -k system/cloud.gono.server   (restart)
+    sudo launchctl bootout system/cloud.gono.server        (stop and unload)
+    sudo launchctl bootstrap system /Library/LaunchDaemons/cloud.gono.server.plist
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>cloud.gono.server</string>
+
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/local/bin/gono-cloud</string>
+		<string>serve</string>
+	</array>
+
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>GONO_CLOUD_CONFIG</key>
+		<string>/usr/local/etc/gono-cloud/config.toml</string>
+	</dict>
+
+	<key>UserName</key>
+	<string>_gono-cloud</string>
+	<key>GroupName</key>
+	<string>_gono-cloud</string>
+	<key>WorkingDirectory</key>
+	<string>/usr/local/var/gono-cloud</string>
+	<!-- 0027: new files are not readable by other users. launchd takes the value in decimal. -->
+	<key>Umask</key>
+	<integer>23</integer>
+
+	<!-- Start at boot, and again after a crash, but not after a clean exit. -->
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
+
+	<!--
+	  On SIGTERM the server stops accepting connections, closes notify_push WebSockets and waits
+	  up to 30 seconds for requests in flight before it exits. launchd sends SIGKILL after this
+	  many seconds.
+	-->
+	<key>ExitTimeOut</key>
+	<integer>45</integer>
+
+	<!-- launchd's default of 256 open files is too low for a file server. -->
+	<key>SoftResourceLimits</key>
+	<dict>
+		<key>NumberOfFiles</key>
+		<integer>10240</integer>
+	</dict>
+	<key>HardResourceLimits</key>
+	<dict>
+		<key>NumberOfFiles</key>
+		<integer>10240</integer>
+	</dict>
+
+	<!-- The server logs to standard output when `logging.file` is unset. -->
+	<key>StandardOutPath</key>
+	<string>/usr/local/var/log/gono-cloud/gono-cloud.log</string>
+	<key>StandardErrorPath</key>
+	<string>/usr/local/var/log/gono-cloud/gono-cloud.log</string>
+</dict>
+</plist>

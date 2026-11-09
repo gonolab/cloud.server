@@ -1,0 +1,70 @@
+# systemd unit of the Gono Cloud server.
+#
+# Installed by packaging/server/install.sh as /etc/systemd/system/gono-cloud.service. The
+# installer replaces this file on upgrades: put local changes into a drop-in instead
+# (`systemctl edit gono-cloud`), for example a ReadWritePaths= line for a data directory outside
+# /var/lib/gono-cloud. See docs/deployment.md.
+#
+# Layout: binary /usr/local/bin/gono-cloud, configuration /etc/gono-cloud/config.toml (read
+# only for the service), database and files under /var/lib/gono-cloud, owned by the system
+# user gono-cloud. Logs go to the journal: `journalctl -u gono-cloud`.
+
+[Unit]
+Description=Gono Cloud file server
+Documentation=https://github.com/gonolab/cloud.server/blob/main/docs/deployment.md
+# The server listens on loopback only; it needs no network-online.target.
+After=network.target
+
+[Service]
+Type=exec
+User=gono-cloud
+Group=gono-cloud
+Environment=GONO_CLOUD_CONFIG=/etc/gono-cloud/config.toml
+ExecStart=/usr/local/bin/gono-cloud serve
+WorkingDirectory=/var/lib/gono-cloud
+UMask=0027
+
+# On SIGTERM the server stops accepting connections, closes notify_push WebSockets and waits up
+# to 30 seconds for requests in flight (uploads, downloads) before it exits. Give it that long
+# plus a margin before systemd falls back to SIGKILL.
+KillSignal=SIGTERM
+KillMode=mixed
+TimeoutStopSec=45s
+Restart=on-failure
+RestartSec=5s
+
+# One descriptor per client connection, open file and notify_push WebSocket.
+LimitNOFILE=65536
+
+# Hardening. The server only needs to write its state directory (database and files) and to
+# accept TCP connections; everything else is read only or hidden.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/gono-cloud
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

@@ -153,12 +153,27 @@ These are resolved by testing against real clients, not by decision:
   | `PROPFIND /remote.php/dav/photos/<user>/albums` | yes | | "Albums" view shows a connection error |
   | `PROPFIND /remote.php/dav/trashbin/<user>/trash/` | | yes | an empty trash bin that offers to restore deleted files |
   | `OPTIONS /remote.php/dav` (looks for `SEARCH` in `Allow`) | yes | | see below |
+  | `SEARCH /remote.php/dav` | yes | yes | see below |
+  | `GET .../search/providers`, `.../search/providers/<id>/search` (unified search) | yes | yes | see below |
+  | `POST .../apps/dav/api/v1/direct` | yes | yes | see below |
 
-  The one gap users notice is `SEARCH`: Nextcloud Android 35 lists Favorites, Media and Recent
-  files and searches files only through `SEARCH` on `/remote.php/dav/`, without a fallback to
-  the `filter-files` REPORT. Without it these views show only what the app has cached and the
-  app shows "Unable to fetch sharees" (its message for any failed search). iOS lists favorites
-  with the REPORT and works. Supporting a subset of `SEARCH` (favorites, media types, recent
-  files, file names) is a decision for the maintainers. The apps show their Albums and trash bin
-  entries regardless of the capabilities; deletions stay permanent although the iOS trash bin
-  view suggests otherwise.
+  The gaps users notice (corrected 2026-11-11 after reading the sources of both apps):
+
+  - `SEARCH` on `/remote.php/dav/`: Nextcloud Android 35 lists Favorites, Media and Recent
+    files only through it, without a fallback to the `filter-files` REPORT. Without it these
+    views show only what the app has cached, and the app shows "Unable to fetch sharees" (its
+    message for any failed search). Nextcloud iOS lists favorites with the REPORT, but its
+    Media tab, its Recent view and the home-screen Files widget use `SEARCH` too: Media and the
+    widget stay empty, and Recent shows only what the phone has cached. The Media tab would
+    also need previews (`nc:has-preview`, `/index.php/core/preview`), which are out of scope.
+  - The search box: both apps search the server through unified search (OCS
+    `search/providers`), not `SEARCH`. It answers 404, so neither app finds files on the
+    server; iOS shows an error banner after the matches in the open folder.
+  - Video and audio playback: both apps play media that is not downloaded yet only by
+    streaming it from a URL that `POST /ocs/v2.php/apps/dav/api/v1/direct` hands out, without
+    a fallback. That endpoint answers 404, so such files do not play; downloaded files play.
+
+  Supporting a subset of `SEARCH` (favorites, media types, recent files, file names), unified
+  search and the `direct` endpoint is a decision for the maintainers; for v1 these are known
+  limitations. The apps show their Albums and trash bin entries regardless of the capabilities;
+  deletions stay permanent although the iOS trash bin view suggests otherwise.

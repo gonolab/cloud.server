@@ -68,6 +68,8 @@ enum AuthFailure {
     Invalid,
     /// Too many failed attempts from this client address.
     RateLimited,
+    /// The credentials could not be checked (the database failed).
+    Unavailable,
 }
 
 /// `GET /push/ws`.
@@ -150,8 +152,14 @@ async fn serve(
                 AuthFailure::Protocol => "Invalid auth message",
                 AuthFailure::Invalid => "Invalid credentials",
                 AuthFailure::RateLimited => "Too many failed attempts, try again later",
+                AuthFailure::Unavailable => "Server temporarily unavailable",
             };
-            reject(&mut socket, reason, close_code::POLICY).await;
+            let code = if failure == AuthFailure::Unavailable {
+                close_code::AGAIN
+            } else {
+                close_code::POLICY
+            };
+            reject(&mut socket, reason, code).await;
             return;
         }
         Err(_) => {
@@ -221,6 +229,7 @@ async fn authenticate_socket(
         AuthOutcome::Authenticated(identity) => Ok(identity),
         AuthOutcome::Missing | AuthOutcome::Invalid => Err(AuthFailure::Invalid),
         AuthOutcome::RateLimited(_) => Err(AuthFailure::RateLimited),
+        AuthOutcome::Unavailable => Err(AuthFailure::Unavailable),
     }
 }
 

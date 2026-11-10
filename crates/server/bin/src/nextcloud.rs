@@ -145,7 +145,9 @@ pub async fn ocs(
         Err(Rejection::Unauthorized) => {
             return reply(version, format, &Outcome::Unauthorized, json!([]));
         }
-        Err(rejection @ Rejection::RateLimited(_)) => return rejection.into_response(),
+        Err(rejection @ (Rejection::RateLimited(_) | Rejection::Unavailable)) => {
+            return rejection.into_response();
+        }
     };
     match endpoint {
         Endpoint::CurrentUser => user_reply(&state, &identity, version, format).await,

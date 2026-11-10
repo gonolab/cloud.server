@@ -328,6 +328,38 @@ async fn only_admins_sign_in_and_only_with_the_web_password() {
 }
 
 #[tokio::test]
+async fn a_failing_database_is_not_a_wrong_password() {
+    let f = fixture().await;
+    let mut browser = Browser::new(&f.state);
+    let form = browser.get(&path("/login")).await;
+    let csrf = form.csrf();
+    f.state.db.close().await;
+
+    let reply = browser
+        .post(
+            &path("/login"),
+            &[
+                ("csrf", &csrf),
+                ("user", "root"),
+                ("password", ROOT_PASSWORD),
+            ],
+        )
+        .await;
+    assert_eq!(
+        reply.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        reply.body
+    );
+    assert!(
+        reply.body.contains("cannot check your password"),
+        "{}",
+        reply.body
+    );
+    assert!(!reply.body.contains("Wrong username or password"));
+}
+
+#[tokio::test]
 async fn non_admin_sessions_are_refused() {
     let f = fixture().await;
     let token = web_sessions::create(&f.state.db, f.alice, db::unix_now())

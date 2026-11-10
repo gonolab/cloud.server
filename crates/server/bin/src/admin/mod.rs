@@ -471,6 +471,7 @@ async fn login(
             }
             response
         }
+        Verified::Unavailable => web::unavailable(),
     }
 }
 

@@ -159,7 +159,13 @@ pub(crate) enum Rejection {
     Unauthorized,
     /// Too many failed attempts: 429 with `Retry-After`.
     RateLimited(Duration),
+    /// The credentials could not be checked: 503 with `Retry-After`. Never 401, which makes
+    /// the Nextcloud apps forget the account (see [`crate::auth`]).
+    Unavailable,
 }
+
+/// `Retry-After` of a [`Rejection::Unavailable`], in seconds.
+const UNAVAILABLE_RETRY_AFTER: &str = "30";
 
 impl IntoResponse for Rejection {
     fn into_response(self) -> Response {
@@ -179,6 +185,14 @@ impl IntoResponse for Rejection {
                 }
                 response
             }
+            Self::Unavailable => {
+                let mut response = StatusCode::SERVICE_UNAVAILABLE.into_response();
+                response.headers_mut().insert(
+                    header::RETRY_AFTER,
+                    HeaderValue::from_static(UNAVAILABLE_RETRY_AFTER),
+                );
+                response
+            }
         }
     }
 }
@@ -194,6 +208,7 @@ pub(crate) async fn authenticate(
         AuthOutcome::Authenticated(identity) => Ok(identity),
         AuthOutcome::Missing | AuthOutcome::Invalid => Err(Rejection::Unauthorized),
         AuthOutcome::RateLimited(wait) => Err(Rejection::RateLimited(wait)),
+        AuthOutcome::Unavailable => Err(Rejection::Unavailable),
     }
 }
 
@@ -516,6 +531,28 @@ mod tests {
             .send("PROPFIND", "/remote.php/webdav/", Some(&f.full), &[], "")
             .await;
         assert_eq!(alias.status, StatusCode::MULTI_STATUS);
+    }
+
+    #[tokio::test]
+    async fn a_failing_database_answers_503_not_401() {
+        // After a 401 on `cloud/user` the Nextcloud iOS app deletes the account from the
+        // device, so credentials that cannot be checked must not look wrong.
+        let f = fixture().await;
+        f.state.db.close().await;
+        for (method, uri) in [
+            ("PROPFIND", FILES),
+            ("GET", "/ocs/v2.php/cloud/user?format=json"),
+            ("GET", "/ocs/v1.php/cloud/user"),
+        ] {
+            let reply = f.send(method, uri, Some(&f.full), &[], "").await;
+            assert_eq!(
+                reply.status,
+                StatusCode::SERVICE_UNAVAILABLE,
+                "{method} {uri}"
+            );
+            assert_eq!(reply.header("retry-after"), "30");
+            assert!(!reply.headers.contains_key(header::WWW_AUTHENTICATE));
+        }
     }
 
     #[tokio::test]

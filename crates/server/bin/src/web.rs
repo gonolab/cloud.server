@@ -62,6 +62,8 @@ pub enum Verified {
     Invalid,
     /// Too many failures from this client; retry after the given time.
     RateLimited(Duration),
+    /// The password could not be checked because the database failed.
+    Unavailable,
 }
 
 /// Outcome of [`Web::sign_in`].
@@ -73,6 +75,8 @@ pub enum SignIn {
     Invalid,
     /// Too many failures from this client; retry after the given time.
     RateLimited(Duration),
+    /// The password could not be checked or the session not stored: the database failed.
+    Unavailable,
 }
 
 /// Sessions, sign-in and CSRF checks of the HTML pages. Shared by all handlers.
@@ -196,7 +200,7 @@ impl Web {
                 Ok(account) => account,
                 Err(err) => {
                     tracing::error!(error = %err, "sign-in lookup failed");
-                    return Verified::Invalid;
+                    return Verified::Unavailable;
                 }
             },
             Err(_) => None,
@@ -238,10 +242,11 @@ impl Web {
         match self.verify_password(client, username, password).await {
             Verified::Ok(user) => match self.open_session(client, &user).await {
                 Some(token) => SignIn::Ok(token),
-                None => SignIn::Invalid,
+                None => SignIn::Unavailable,
             },
             Verified::Invalid => SignIn::Invalid,
             Verified::RateLimited(wait) => SignIn::RateLimited(wait),
+            Verified::Unavailable => SignIn::Unavailable,
         }
     }
 
@@ -367,6 +372,21 @@ pub fn too_many_attempts(wait: Duration) -> Response {
         ),
     )
     .respond(StatusCode::TOO_MANY_REQUESTS)
+}
+
+/// The page shown when a password could not be checked because the database failed: `503`
+/// with `Retry-After`, so that it does not read as a wrong password.
+pub fn unavailable() -> Response {
+    let mut response = Message::new(
+        "Temporarily unavailable",
+        "Temporarily unavailable",
+        "The server cannot check your password right now. Try again in a moment.",
+    )
+    .respond(StatusCode::SERVICE_UNAVAILABLE);
+    response
+        .headers_mut()
+        .insert(header::RETRY_AFTER, HeaderValue::from_static("30"));
+    response
 }
 
 /// A page with a heading and a short text (`templates/message.html`).

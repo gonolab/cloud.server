@@ -28,6 +28,10 @@ compatible within a major version: released clients keep working with newer serv
 - Nextcloud Android can list the folders of users whose name contains `@`: hrefs leave `@`,
   `:`, `(` and `)` unencoded, as Nextcloud does, instead of writing `%40`, which the app could
   not match against the user name.
+- A database error while checking credentials answers `503` instead of `401`. After a `401`
+  the Nextcloud iOS app deleted the account from the device and Nextcloud Android discarded
+  the stored password. The web login says the server is temporarily unavailable instead of
+  "wrong username or password".
 
 ## [1.0.0] - 2026-11-10
 

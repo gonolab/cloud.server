@@ -344,6 +344,7 @@ pub async fn submit(
                 retry_after(&mut response, wait.as_secs());
                 response
             }
+            SignIn::Unavailable => web::unavailable(),
         };
     }
 

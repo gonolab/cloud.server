@@ -7,6 +7,12 @@
 //! 3. The password is hashed with SHA-256 and the single matching `app_passwords` row is
 //!    loaded; it must belong to the given username, the account must be enabled, and the app
 //!    password must not have expired. Web login passwords are never accepted here.
+//!
+//!    When the lookup itself fails (the database is unreachable or broken), the outcome is
+//!    [`AuthOutcome::Unavailable`], answered with `503`, never `401`: after a `401` on
+//!    `cloud/user` the Nextcloud iOS app deletes the account from the device, and Nextcloud
+//!    Android discards the stored password, so a short database problem must not look like
+//!    revoked credentials.
 //! 4. `last_used_at` is written at most once every [`LAST_USED_GRANULARITY`] per app password,
 //!    in the background, so ordinary requests do not write to the database.
 //!
@@ -41,6 +47,8 @@ pub enum AuthOutcome {
     Invalid,
     /// Too many failed attempts from this client; retry after the given time.
     RateLimited(Duration),
+    /// The credentials could not be checked because the database failed; retry later.
+    Unavailable,
 }
 
 /// Verifies app passwords. Shared by all request handlers.
@@ -100,10 +108,10 @@ impl Authenticator {
                 AuthOutcome::Invalid
             }
             Err(err) => {
-                // Treat database trouble as a failed sign-in rather than letting it through;
-                // the error is logged once here.
+                // Neither let the request through nor call the credentials wrong (see the
+                // module documentation); the error is logged once here.
                 tracing::error!(error = %err, "authentication lookup failed");
-                AuthOutcome::Invalid
+                AuthOutcome::Unavailable
             }
         }
     }
@@ -257,5 +265,23 @@ mod tests {
             auth.authenticate(other, &basic("alice", &token)).await,
             AuthOutcome::Authenticated(_)
         ));
+    }
+
+    #[tokio::test]
+    async fn a_failing_database_is_unavailable_not_invalid() {
+        let (_dir, pool, token) = setup().await;
+        let limiter = Arc::new(RateLimiter::new());
+        let auth = Authenticator::new(pool.clone(), Arc::clone(&limiter));
+        let client: IpAddr = "192.0.2.10".parse().unwrap();
+        pool.close().await;
+
+        for _ in 0..=crate::ratelimit::BURST {
+            assert!(matches!(
+                auth.authenticate(client, &basic("alice", &token)).await,
+                AuthOutcome::Unavailable
+            ));
+        }
+        // Not counted as failures.
+        assert!(limiter.check(client).is_none());
     }
 }

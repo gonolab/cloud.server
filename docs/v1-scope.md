@@ -24,7 +24,8 @@ listed under "In scope" is deferred until after v1.
   - Live properties (`oc:fileid`, `oc:permissions`, `oc:favorite`, ...) and `OC-*` response
     headers.
   - Directory ETag propagation: any change updates the ETag of every ancestor collection.
-  - Favorites through `PROPPATCH` and the `filter-files` REPORT (used by the mobile apps).
+  - Favorites through `PROPPATCH` and the `filter-files` REPORT (used by the desktop client and
+    the iOS app; the Android app lists favorites with `SEARCH`, see the open questions).
 - **Multiple users** with per-app-password mount scopes (`view` or `full`).
 - **notify_push** for real-time change notifications.
 - **Web admin UI**: server overview, accounts (create, enable and disable, admin role, display
@@ -112,11 +113,42 @@ These are resolved by testing against real clients, not by decision:
   `nextcloudcmd` 4.0.6 (Ubuntu 26.04) reads `status.php`, the capabilities and
   `/ocs/v1.php/cloud/user` and completes every sync scenario of
   `acceptance/scripts/nextcloudcmd-scenarios.sh` with these values; no desktop behavior
-  depends on `productname`. The mobile apps are not verified yet; `docs/mobile-checklist.md`
-  step 1.1 checks that they accept the server. If one of them requires a specific
-  `productname`, that is a decision for the maintainers, not a default to change silently.
+  depends on `productname`. If a client requires a specific `productname`, that is a decision
+  for the maintainers, not a default to change silently.
+
+  Mobile apps (2026-11-10, `docs/mobile-checklist.md`): Nextcloud Android 35.0.2 and Nextcloud
+  iOS 35.2.2 accept `Gono Cloud` with `version` `30.0.0.0`; neither checks `productname`.
+  What they did depend on were protocol details, all fixed before 1.0.0: Android detects the
+  authentication method with an anonymous `HEAD /remote.php/dav` and needs a 401 with a Basic
+  challenge there; iOS polls Login Flow v2 with the token in the query, finds multistatus
+  entries only under the prefix `d:` (`d:multistatus`, `d:response`, ...) and sends
+  `X-OC-MTime` with fractions of a second.
 - The exact set of OCS endpoints the mobile apps call, and which of them can return empty
   results. Implemented: `cloud/capabilities`, `cloud/user`, `cloud/users/<own id>`,
   `core/apppassword` (`DELETE`) and an empty `core/navigation/apps`; everything else answers
   an OCS 404. `nextcloudcmd` 4.0.6 calls only `status.php`, the capabilities and
-  `cloud/user`. The mobile checklist records the failed requests of the apps.
+  `cloud/user`.
+
+  Mobile apps (2026-11-10): both apps call the capabilities, `cloud/user` and (iOS)
+  `cloud/users/<own id>`. The other requests they send all answer 404, and both apps carry on:
+
+  | Request | Android 35.0.2 | iOS 35.2.2 | What the app shows |
+  |---|---|---|---|
+  | `GET`/`POST`/`DELETE .../apps/notifications/api/v2/notifications`, `.../push` | yes | push only | nothing |
+  | `GET .../apps/user_status/api/v1/user_status`, `.../predefined_statuses` | yes | | nothing |
+  | `GET .../apps/activity/api/v2/activity/filter` | yes | | "No activity yet" in file details |
+  | `GET .../apps/files_sharing/api/v1/shares` | yes | | sharing tab says sharing is not possible |
+  | `GET .../apps/dashboard/api/v1/widgets`, `.../apps/files/api/v1/directEditing` | | yes | nothing |
+  | `GET /index.php/avatar/<user>/<size>`, `GET /index.php/core/preview` | yes | yes | initials, file type icons |
+  | `PROPFIND /remote.php/dav/photos/<user>/albums` | yes | | "Albums" view shows a connection error |
+  | `PROPFIND /remote.php/dav/trashbin/<user>/trash/` | | yes | an empty trash bin that offers to restore deleted files |
+  | `OPTIONS /remote.php/dav` (looks for `SEARCH` in `Allow`) | yes | | see below |
+
+  The one gap users notice is `SEARCH`: Nextcloud Android 35 lists Favorites, Media and Recent
+  files and searches files only through `SEARCH` on `/remote.php/dav/`, without a fallback to
+  the `filter-files` REPORT. Without it these views show only what the app has cached and the
+  app shows "Unable to fetch sharees" (its message for any failed search). iOS lists favorites
+  with the REPORT and works. Supporting a subset of `SEARCH` (favorites, media types, recent
+  files, file names) is a decision for the maintainers. The apps show their Albums and trash bin
+  entries regardless of the capabilities; deletions stay permanent although the iOS trash bin
+  view suggests otherwise.

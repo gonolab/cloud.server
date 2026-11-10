@@ -38,7 +38,7 @@ endpoints the mobile apps call.
 | 1.5 | Press **Grant access**. | "Access granted"; the app finishes the login within a few seconds and shows the files. |
 | 1.6 | On the server: `gono-cloud app-password list mobiletest`. | A new app password labeled with the app name, `last used` set. The web login password was not handed to the app. |
 | 1.7 | Start adding the account again on a second phone (or after removing it) and press **Cancel** on the consent page. | "Access denied". The app does not log in (it gives up when the request expires after 20 minutes, or when the user cancels in the app). |
-| 1.8 | Remove the account in the app. | `gono-cloud app-password list` no longer shows its app password (the app revokes it with `DELETE /ocs/v2.php/core/apppassword`). |
+| 1.8 | Remove the account in the app. | Android: `gono-cloud app-password list` no longer shows its app password (the app revokes it with `DELETE /ocs/v2.php/core/apppassword`). iOS 35 only removes the account locally and leaves the app password; revoke it with `gono-cloud app-password delete`. |
 
 Add the account again (1.1–1.5) for the following sections.
 
@@ -49,7 +49,7 @@ Add the account again (1.1–1.5) for the following sections.
 | 2.1 | Open the root and the nested folders. | All files and folders are listed with sizes and modification times; folder sizes are the total of their content. |
 | 2.2 | Open the file with spaces and non-ASCII characters. | Listed and opened with the right name. |
 | 2.3 | Change a file three levels deep from another device, then refresh the root in the app and go down to the file. | The app shows the new size and time (directory ETags changed up to the root). |
-| 2.4 | Look at the actions offered for files and folders. | No sharing, no versions, no comments, no trash bin. Missing thumbnails are fine (previews are out of scope). |
+| 2.4 | Look at the actions offered for files and folders. | No sharing, no versions, no comments, no trash bin. Missing thumbnails are fine (previews are out of scope). The apps keep some entries regardless of the capabilities: Android's file details have a Sharing tab (it says sharing is not possible) and a comment field, iOS shows an empty trash bin. |
 | 2.5 | Account or settings screen. | Display name and storage usage are shown (quota is "unlimited" with the free space of the server). |
 
 ## 3. Upload
@@ -57,7 +57,7 @@ Add the account again (1.1–1.5) for the following sections.
 | # | Step | Expected |
 |---|---|---|
 | 3.1 | Upload a small file and a photo into a subfolder. | Uploaded; visible on another device with the same content. |
-| 3.2 | Upload the file larger than 50 MiB. | Uploaded in chunks: the server log shows `MKCOL`, several `PUT` and one `MOVE .../.file` under `/remote.php/dav/uploads/<user>/`. The content matches the original (compare checksums). |
+| 3.2 | Upload the file larger than 50 MiB (on iOS larger than 100 MB: Nextcloud iOS uploads smaller files with one `PUT` and uses 100 MB chunks). | Uploaded in chunks: the server log shows `MKCOL`, several `PUT` and one `MOVE .../.file` under `/remote.php/dav/uploads/<user>/`. The content matches the original (compare checksums) and keeps its modification time. |
 | 3.3 | Start another large upload and switch on airplane mode halfway; switch it off again. | The upload resumes or restarts and finishes; the file is complete. A `PROPFIND` on the upload session in the server log shows the app listing the chunks it already sent. |
 | 3.4 | Upload a file with the same name as an existing one and choose "replace". | The file is replaced; its file id (shown as `oc:fileid` in a PROPFIND) stays the same. |
 | 3.5 | Optional: enable automatic photo upload and take a photo. | The photo is uploaded into the configured folder. |
@@ -67,14 +67,14 @@ Add the account again (1.1–1.5) for the following sections.
 | # | Step | Expected |
 |---|---|---|
 | 4.1 | Open a text file, a photo and the large file. | They open with the right content. |
-| 4.2 | Make a file available offline, change it on another device, refresh. | The app downloads the new version. |
+| 4.2 | Make a file available offline, change it on another device, refresh. (Android 35 has no offline switch for files, only "Sync" for folders; there, download the file, change it and open it again.) | The app downloads the new version. |
 
 ## 5. Favorites
 
 | # | Step | Expected |
 |---|---|---|
 | 5.1 | Mark a file deep in the tree and a folder as favorites. | The star is set; it is still set after a refresh and on another device. |
-| 5.2 | Open the Favorites view. | Both favorites are listed. The server log shows `REPORT` with status `207`. If the app uses `SEARCH` instead (logged as `405`), record it: `SEARCH` is not part of v1. |
+| 5.2 | Open the Favorites view. | iOS: both favorites are listed; the server log shows `REPORT` with status `207`. Android 35 lists favorites with `SEARCH`, which is not part of v1: it sends `OPTIONS /remote.php/dav` (404), shows only the favorites it has cached and the message "Unable to fetch sharees". |
 | 5.3 | Remove a star. | The item disappears from the Favorites view. |
 | 5.4 | Rename and then move a favorite file. | It stays a favorite and is listed under its new name. |
 
@@ -105,15 +105,39 @@ grep -E 'status=(404|405|501)' /path/to/gono-cloud.log | grep -o 'method=[A-Z]* 
 
 ## Results
 
-| Section | Android (app version: ) | iOS (app version: ) |
-|---|---|---|
-| 1. Add the account | | |
-| 2. Browse | | |
-| 3. Upload | | |
-| 4. Download | | |
-| 5. Favorites | | |
-| 6. Rename and move | | |
-| 7. Delete | | |
-| Failed requests from the log | | |
+### 2026-11-10, server 1.0.0
 
-Server version (`gono-cloud --version`), date and tester:
+Server: `gono-cloud` 1.0.0 (release dry run of 4fc62b0) installed with `install.sh` on Debian 12
+behind nginx 1.22.1, Let's Encrypt certificate for an `ipssl.cc` name; upgraded to each fix
+below during the test. Tester: the maintainer, partly through an Android emulator and an iOS
+simulator.
+
+Devices:
+
+- Android: Nextcloud Android 35.0.2 from the store on a phone, and the same release
+  (`nextcloud-350000290.apk`) on an Android 15 emulator.
+- iOS: Nextcloud iOS 35.2.2 built from the `35.2.2` tag for the iPhone 17 simulator (iOS 27.2).
+  The simulator has no airplane mode, so 3.3 was not run on iOS.
+
+Fixed during the test, each with tests:
+
+- `e7e589d`: Android refused the server at 1.1: its anonymous `HEAD /remote.php/dav` got 404;
+  the DAV root now answers 401 with a Basic challenge.
+- `c975baa`: iOS never finished Login Flow v2: it polls with the token in the query and got 415.
+- `ffad48a`: iOS showed every folder as empty: it reads multistatus entries only under the
+  prefix `d:`, dav-server wrote `D:`.
+- `2f4e2b8`: every iOS upload failed with 400: `X-OC-MTime`/`X-OC-CTime` with fractions of a
+  second.
+
+| Section | Android 35.0.2 | iOS 35.2.2 |
+|---|---|---|
+| 1. Add the account | Pass (1.1 after `e7e589d`) | Pass for 1.1, 1.2, 1.4, 1.5, 1.6 (after `c975baa`); 1.8: the app leaves its app password (client behavior); 1.3 and 1.7 not run (same server pages as on Android) |
+| 2. Browse | Pass; notes on 2.4 | Pass (after `ffad48a`); notes on 2.4 |
+| 3. Upload | Pass 3.1 to 3.4: 878 MB in 10 MB chunks, resume after a network cut lists the uploaded chunks with `PROPFIND` and continues, replace keeps the file id; 3.5 not run | Pass 3.1, 3.2 (220 MB in three 100 MB chunks, checksum and modification time kept), 3.4 (after `2f4e2b8`); 3.3 and 3.5 not run |
+| 4. Download | Pass (4.2 as a re-download on open) | Pass ("Set available offline" file re-downloaded on refresh) |
+| 5. Favorites | 5.1, 5.3, 5.4 pass; 5.2 shows only cached favorites and "Unable to fetch sharees" (needs `SEARCH`) | Pass (`REPORT` 207); the list updates after a refresh |
+| 6. Rename and move | Pass, including the case-only rename | Pass, including the case-only rename |
+| 7. Delete | Pass, with a confirmation, no restore offered | Pass; deletes without asking, and the sidebar's trash bin claims deleted files can be restored |
+| Failed requests from the log | See `docs/v1-scope.md`, open questions: notifications, user_status, activity, shares, avatar, preview, Albums, `OPTIONS /remote.php/dav` | dashboard widgets, directEditing, notifications push, avatar, preview, trash bin |
+
+Neither app connected to notify_push (`/push/ws`); the desktop client uses it.

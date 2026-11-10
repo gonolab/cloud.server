@@ -626,6 +626,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn fractional_oc_times_are_truncated_like_nextcloud() {
+        // NextcloudKit (iOS) sends `X-OC-MTime: 1700000000.123456`; dav-server alone refuses
+        // that with 400, Nextcloud truncates it.
+        let f = fixture().await;
+        let put = f
+            .send(
+                "PUT",
+                &format!("{FILES}/photo.jpg"),
+                Some(&f.full),
+                &[
+                    ("X-OC-MTime", "1700000000.123456"),
+                    ("X-OC-CTime", "1699999999.5"),
+                ],
+                "jpeg",
+            )
+            .await;
+        assert_eq!(put.status, StatusCode::CREATED, "{}", put.body);
+        assert_eq!(put.header("x-oc-mtime"), "accepted");
+        let get = f
+            .send("GET", &format!("{FILES}/photo.jpg"), Some(&f.full), &[], "")
+            .await;
+        assert_eq!(get.header("last-modified"), "Tue, 14 Nov 2023 22:13:20 GMT");
+
+        let malformed = f
+            .send(
+                "PUT",
+                &format!("{FILES}/other.jpg"),
+                Some(&f.full),
+                &[("X-OC-MTime", "yesterday")],
+                "jpeg",
+            )
+            .await;
+        assert_eq!(malformed.status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
     async fn repeated_failures_are_rate_limited() {
         let f = fixture().await;
         for _ in 0..crate::ratelimit::BURST {
@@ -1461,7 +1497,8 @@ mod tests {
                 &[
                     ("Destination", destination),
                     ("OC-Total-Length", "11"),
-                    ("X-OC-MTime", "1700000000"),
+                    // NextcloudKit sends fractions of a second.
+                    ("X-OC-MTime", "1700000000.75"),
                 ],
                 "",
             )
@@ -1474,6 +1511,7 @@ mod tests {
             .send("GET", &format!("{FILES}/big.bin"), full, &[], "")
             .await;
         assert_eq!(get.body, "hello world");
+        assert_eq!(get.header("last-modified"), "Tue, 14 Nov 2023 22:13:20 GMT");
         assert_eq!(get.header("etag"), moved.header("etag"));
         assert_eq!(
             f.send(

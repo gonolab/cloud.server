@@ -14,6 +14,8 @@
 //!   403 instead of a multistatus.
 //! - `GET`/`HEAD` on a collection answer 200 with an empty body, as Nextcloud does; dav-server
 //!   would redirect or refuse.
+//! - `X-OC-MTime` and `X-OC-CTime` with a fraction of a second (NextcloudKit sends them) are
+//!   truncated to whole seconds, as Nextcloud does; dav-server would refuse them with 400.
 //!
 //! Everything else is handled by dav-server through `handle_guarded`. Afterwards the entry the
 //! request produced or read (PUT, MKCOL, MOVE, COPY, GET, HEAD) is attached to the response as
@@ -24,12 +26,12 @@ use std::{io, sync::Arc};
 
 use bytes::Bytes;
 use dav_server::{DavHandler, davpath::DavPath, fs::FsError};
-use http::{HeaderValue, Method, Request, Response, StatusCode, header};
+use http::{HeaderMap, HeaderValue, Method, Request, Response, StatusCode, header};
 use http_body::Body;
 use http_body_util::{BodyExt as _, Empty, Full, Limited, combinators::UnsyncBoxBody};
 
 use crate::{
-    ctx::{Ctx, PropfindKind, RequestInfo, destination_path},
+    ctx::{Ctx, PropfindKind, RequestInfo, destination_path, oc_time_seconds},
     fs::ScopedFs,
     identity::Identity,
     locks::{CtxBody, with_ctx},
@@ -117,6 +119,26 @@ fn xml_error(status: StatusCode, condition: &str) -> Response<DavBody> {
 }
 
 /// Whether every segment of a percent-encoded path is acceptable (see the module docs).
+/// Rewrites `X-OC-MTime` and `X-OC-CTime` values with a fraction (`1700000000.25`, as
+/// NextcloudKit sends them) to whole seconds. dav-server only parses whole seconds and answers
+/// 400 otherwise, while Nextcloud truncates. Values that are not numbers stay as they are, so
+/// dav-server still refuses them.
+fn truncate_oc_times(headers: &mut HeaderMap) {
+    for name in ["x-oc-mtime", "x-oc-ctime"] {
+        let Some(value) = headers.get(name).and_then(|value| value.to_str().ok()) else {
+            continue;
+        };
+        if !value.contains('.') {
+            continue;
+        }
+        if let Some(seconds) = oc_time_seconds(value)
+            && let Ok(whole) = HeaderValue::from_str(&seconds.to_string())
+        {
+            headers.insert(name, whole);
+        }
+    }
+}
+
 pub fn path_is_clean(raw: &str) -> bool {
     raw.split('/').all(|segment| {
         let decoded: Vec<u8> = percent_decode(segment.as_bytes());
@@ -195,10 +217,11 @@ impl DavService {
         B: Body<Data = Bytes> + Send + 'static,
         B::Error: std::error::Error + Send + Sync + 'static,
     {
-        let (parts, body) = request.into_parts();
+        let (mut parts, body) = request.into_parts();
         if !path_is_clean(parts.uri.path()) {
             return simple(StatusCode::BAD_REQUEST);
         }
+        truncate_oc_times(&mut parts.headers);
         let destination = parts
             .headers
             .get(header::HeaderName::from_static("destination"))

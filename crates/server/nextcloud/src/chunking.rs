@@ -282,10 +282,10 @@ fn total_length(headers: &HeaderMap) -> Result<Option<u64>, Reject> {
     }
 }
 
-/// `X-OC-MTime` (UNIX seconds), if sent and positive.
+/// `X-OC-MTime` (UNIX seconds, a fraction truncated), if sent and positive.
 fn oc_mtime(headers: &HeaderMap) -> Option<i64> {
     header_str(headers, "x-oc-mtime")
-        .and_then(|value| value.parse::<i64>().ok())
+        .and_then(gono_server_dav::ctx::oc_time_seconds)
         .filter(|&mtime| mtime > 0)
 }
 

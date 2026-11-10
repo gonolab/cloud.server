@@ -73,11 +73,27 @@ impl RequestInfo {
             destination: header("destination").and_then(destination_path),
             depth_zero: header("depth") == Some("0"),
             oc_mtime: header("x-oc-mtime")
-                .and_then(|value| value.parse::<i64>().ok())
+                .and_then(oc_time_seconds)
                 .filter(|&mtime| mtime > 0),
             propfind: PropfindKind::default(),
         }
     }
+}
+
+/// Parses an `X-OC-MTime` or `X-OC-CTime` value the way Nextcloud does: UNIX seconds, where a
+/// fraction is accepted and truncated (NextcloudKit, the iOS app, sends `1700000000.25`).
+/// `None` for anything that is not a plain decimal number.
+pub fn oc_time_seconds(value: &str) -> Option<i64> {
+    let value = value.trim();
+    let (whole, fraction) = value.split_once('.').unwrap_or((value, ""));
+    let digits = whole.strip_prefix(['+', '-']).unwrap_or(whole);
+    if digits.is_empty()
+        || !digits.bytes().all(|byte| byte.is_ascii_digit())
+        || !fraction.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return None;
+    }
+    whole.parse().ok()
 }
 
 /// Parses a `Destination` header (absolute URL or absolute path) the way dav-server does.
@@ -186,4 +202,32 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::oc_time_seconds;
+
+    #[test]
+    fn oc_times_accept_fractions_like_nextcloud() {
+        assert_eq!(oc_time_seconds("1700000000"), Some(1_700_000_000));
+        // NextcloudKit sends `timeIntervalSince1970` as is.
+        assert_eq!(oc_time_seconds("1700000000.123456"), Some(1_700_000_000));
+        assert_eq!(oc_time_seconds(" 1700000000.9 "), Some(1_700_000_000));
+        assert_eq!(oc_time_seconds("1700000000."), Some(1_700_000_000));
+        assert_eq!(oc_time_seconds("+5.5"), Some(5));
+        assert_eq!(oc_time_seconds("-5.5"), Some(-5));
+        for malformed in [
+            "",
+            ".5",
+            "abc",
+            "1.7e9",
+            "0x10",
+            "1.2.3",
+            "1 2",
+            "1700000000.5s",
+        ] {
+            assert_eq!(oc_time_seconds(malformed), None, "{malformed:?}");
+        }
+    }
 }

@@ -349,6 +349,35 @@ async fn put_with_x_oc_mtime_sets_last_modified() {
     );
 }
 
+/// NextcloudKit (iOS) sends `X-OC-MTime` and `X-OC-CTime` with fractions of a second;
+/// Nextcloud truncates them instead of refusing the upload.
+#[tokio::test]
+async fn put_with_a_fractional_x_oc_mtime_is_truncated() {
+    let Some(ctx) = Ctx::new().await else { return };
+    let dav = ctx.dav();
+    let rel = ctx.path("fractional-mtime.txt");
+    let put = dav
+        .send(
+            dav.request("PUT", &dav.url(&rel))
+                .header("X-OC-MTime", "1700000000.123456")
+                .header("X-OC-CTime", "1699999999.5")
+                .body("mtime"),
+        )
+        .await;
+    put.expect(&[201]);
+    assert_eq!(
+        put.header("x-oc-mtime").as_deref(),
+        Some("accepted"),
+        "{}",
+        put.describe()
+    );
+    let entry = dav.stat(&rel).await;
+    assert_eq!(
+        entry.text(DAV, "getlastmodified").as_deref(),
+        Some("Tue, 14 Nov 2023 22:13:20 GMT")
+    );
+}
+
 #[tokio::test]
 async fn fileid_is_kept_on_move_and_overwrite_and_new_on_copy() {
     let Some(ctx) = Ctx::new().await else { return };

@@ -10,7 +10,7 @@ compatible within a major version: released clients keep working with newer serv
 
 ## [Unreleased]
 
-## [1.0.0] - 2026-11-09
+## [1.0.0] - 2026-11-10
 
 First release of the rewrite on top of [dav-server-rs](https://github.com/messense/dav-server-rs).
 It shares nothing with the legacy `v0.1.x` releases: there is no migration path from them, and

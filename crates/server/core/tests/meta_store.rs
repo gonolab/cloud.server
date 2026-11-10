@@ -444,6 +444,46 @@ async fn dead_props_follow_moves_and_copies_and_die_with_deletes() {
 }
 
 #[tokio::test]
+async fn creation_times_survive_writes_and_moves_and_are_copied() {
+    let f = fixture().await;
+    let id = f.write("a.txt", 1).await;
+    let row = |path: &'static str| {
+        let store = f.store.clone();
+        let owner = f.owner;
+        async move { store.get(owner, &p(path)).await.unwrap().unwrap() }
+    };
+    assert_eq!(
+        row("a.txt").await.creation_time,
+        0,
+        "unknown until reported"
+    );
+    let etag = f.etag("a.txt").await;
+    f.store.set_creation_time(id, 1_600_000_000).await.unwrap();
+    assert_eq!(row("a.txt").await.creation_time, 1_600_000_000);
+    assert_eq!(f.etag("a.txt").await, etag, "not content");
+
+    f.write("a.txt", 2).await;
+    assert_eq!(row("a.txt").await.creation_time, 1_600_000_000, "overwrite");
+    f.store
+        .record_move(f.owner, &p("a.txt"), &p("b.txt"), file_stat(2))
+        .await
+        .unwrap();
+    assert_eq!(row("b.txt").await.creation_time, 1_600_000_000, "move");
+    let copy = f
+        .store
+        .record_copy(
+            f.owner,
+            &p("b.txt"),
+            &p("c.txt"),
+            &[(RelPath::root(), file_stat(2))],
+        )
+        .await
+        .unwrap();
+    assert_eq!(copy.creation_time, 1_600_000_000, "copy");
+    assert_eq!(row("c.txt").await.creation_time, 1_600_000_000);
+}
+
+#[tokio::test]
 async fn dead_props_can_be_set_replaced_and_removed() {
     let f = fixture().await;
     let id = f.write("props.txt", 1).await;

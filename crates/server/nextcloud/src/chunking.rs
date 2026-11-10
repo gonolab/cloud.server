@@ -564,7 +564,10 @@ impl ChunkedUploads {
             Ok(target) => target,
             Err(response) => return *response,
         };
-        let ctx = Ctx::new(identity, RequestInfo::new(Method::PUT));
+        let mut info = RequestInfo::new(Method::PUT);
+        // The creation time of an assembled file comes with the final `MOVE`.
+        info.oc_ctime = gono_server_dav::ctx::oc_ctime(&parts.headers);
+        let ctx = Ctx::new(identity, info);
         let result = match (parts.method.as_str(), &target) {
             ("MKCOL", Target::Session(id)) => self.create(&ctx, id, &parts.headers).await,
             ("PUT", Target::Chunk(id, name)) => {

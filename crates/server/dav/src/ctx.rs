@@ -40,6 +40,9 @@ pub struct RequestInfo {
     pub depth_zero: bool,
     /// `X-OC-MTime` of a PUT, UNIX seconds.
     pub oc_mtime: Option<i64>,
+    /// `X-OC-CTime` of a PUT or of the `MOVE` that completes a chunked upload, UNIX seconds:
+    /// the creation time to record for the written file.
+    pub oc_ctime: Option<i64>,
     /// Kind of PROPFIND body.
     pub propfind: PropfindKind,
 }
@@ -53,6 +56,7 @@ impl RequestInfo {
             destination: None,
             depth_zero: false,
             oc_mtime: None,
+            oc_ctime: None,
             propfind: PropfindKind::default(),
         }
     }
@@ -75,9 +79,19 @@ impl RequestInfo {
             oc_mtime: header("x-oc-mtime")
                 .and_then(oc_time_seconds)
                 .filter(|&mtime| mtime > 0),
+            oc_ctime: oc_ctime(&parts.headers),
             propfind: PropfindKind::default(),
         }
     }
+}
+
+/// `X-OC-CTime` (UNIX seconds, a fraction truncated), if sent and positive.
+pub fn oc_ctime(headers: &http::HeaderMap) -> Option<i64> {
+    headers
+        .get("x-oc-ctime")
+        .and_then(|value| value.to_str().ok())
+        .and_then(oc_time_seconds)
+        .filter(|&ctime| ctime > 0)
 }
 
 /// Parses an `X-OC-MTime` or `X-OC-CTime` value the way Nextcloud does: UNIX seconds, where a

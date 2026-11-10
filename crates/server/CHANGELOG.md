@@ -41,6 +41,11 @@ compatible within a major version: released clients keep working with newer serv
   login has a limiter of its own.
 - `PROPFIND` with `Depth: infinity` is answered like `Depth: 1`, as Nextcloud does, instead of
   `403`. Folders made available offline in the Nextcloud iOS app downloaded nothing.
+- Uploads keep the creation time clients send in `X-OC-CTime`, reported as
+  `nc:creation_time` and settable with `PROPPATCH` (a database migration adds the column).
+  Nextcloud Android reported files that were already on the server as conflicts, for example
+  after a reinstall or a lost response; images can still conflict, because their dimensions
+  are not reported.
 
 ## [1.0.0] - 2026-11-10
 

@@ -3,7 +3,7 @@
 //! `filter-files` REPORT, and chunked upload v2.
 
 use gono_acceptance::{
-    Ctx, DAV, Dav, OC, Resp,
+    Ctx, DAV, Dav, NC, OC, Resp,
     dav::{FILTER_FILES_FAVORITES, normalize_etag, proppatch_favorite},
     random_id,
 };
@@ -465,6 +465,87 @@ async fn put_with_a_fractional_x_oc_mtime_is_truncated() {
         entry.text(DAV, "getlastmodified").as_deref(),
         Some("Tue, 14 Nov 2023 22:13:20 GMT")
     );
+}
+
+/// Nextcloud Android sends `X-OC-CTime` with uploads and treats an existing file as the same
+/// one only if `nc:creation_time` matches the local file; otherwise it reports a conflict.
+#[tokio::test]
+async fn creation_time_is_stored_from_uploads_and_proppatch() {
+    let Some(ctx) = Ctx::new().await else { return };
+    let dav = ctx.dav();
+    const BODY: &str = r#"<?xml version="1.0"?><d:propfind xmlns:d="DAV:" xmlns:nc="http://nextcloud.org/ns"><d:prop><nc:creation_time/></d:prop></d:propfind>"#;
+    let creation_time = |rel: String| {
+        let dav = dav.clone();
+        async move {
+            dav.propfind(&rel, "0", BODY)
+                .await
+                .multistatus()
+                .get(&dav.href_path(&rel))
+                .and_then(|entry| entry.text(NC, "creation_time"))
+        }
+    };
+
+    let plain = ctx.path("plain.txt");
+    dav.put(&plain, "x").await.expect(&[201]);
+    assert_eq!(creation_time(plain).await.as_deref(), Some("0"), "unknown");
+
+    let rel = ctx.path("photo.jpg");
+    dav.send(
+        dav.request("PUT", &dav.url(&rel))
+            .header("X-OC-CTime", "1600000000")
+            .body("v1"),
+    )
+    .await
+    .expect(&[201]);
+    assert_eq!(
+        creation_time(rel.clone()).await.as_deref(),
+        Some("1600000000")
+    );
+    // An overwrite without the header keeps it.
+    dav.put(&rel, "v2").await.expect(&[204]);
+    assert_eq!(
+        creation_time(rel.clone()).await.as_deref(),
+        Some("1600000000")
+    );
+    dav.copy(&rel, &ctx.path("copy.jpg"), None)
+        .await
+        .expect(&[201]);
+    assert_eq!(
+        creation_time(ctx.path("copy.jpg")).await.as_deref(),
+        Some("1600000000")
+    );
+
+    let response = dav
+        .proppatch(
+            &rel,
+            r#"<?xml version="1.0"?><d:propertyupdate xmlns:d="DAV:" xmlns:nc="http://nextcloud.org/ns"><d:set><d:prop><nc:creation_time>1500000000</nc:creation_time></d:prop></d:set></d:propertyupdate>"#,
+        )
+        .await;
+    response.expect(&[207]);
+    assert_eq!(
+        creation_time(rel.clone()).await.as_deref(),
+        Some("1500000000")
+    );
+
+    // Chunked uploads send it with the final MOVE.
+    let big = ctx.path("big.bin");
+    let upload = format!("acc-{}", random_id());
+    let destination = dav.url(&big);
+    mkcol_upload(&dav, &upload, &destination, 2)
+        .await
+        .expect(&[201]);
+    put_chunk(&dav, &upload, "00001", &destination, 2, b"ab")
+        .await
+        .expect(&[201]);
+    dav.send(
+        dav.request("MOVE", &dav.upload_url(&format!("{upload}/.file")))
+            .header("Destination", &destination)
+            .header("OC-Total-Length", "2")
+            .header("X-OC-CTime", "1400000000.9"),
+    )
+    .await
+    .expect(&[201]);
+    assert_eq!(creation_time(big).await.as_deref(), Some("1400000000"));
 }
 
 #[tokio::test]

@@ -35,7 +35,7 @@ pub fn permissions(kind: Kind, writable: bool, mount_root: bool, is_virtual: boo
 /// Live property names in the ownCloud namespace.
 const OC_LIVE: &[&str] = &["fileid", "id", "permissions", "favorite", "size"];
 /// Live property names in the Nextcloud namespace.
-const NC_LIVE: &[&str] = &["has-preview"];
+const NC_LIVE: &[&str] = &["has-preview", "creation_time"];
 
 /// Whether `prop` is one of the live properties computed here.
 pub fn is_live(prop: &DavProp) -> bool {
@@ -46,9 +46,22 @@ pub fn is_live(prop: &DavProp) -> bool {
     }
 }
 
-/// Whether PROPPATCH may change `prop` (only `oc:favorite` among the live properties).
-pub fn is_settable_live(prop: &DavProp) -> bool {
-    prop.namespace.as_deref() == Some(NS_OC) && prop.name == "favorite"
+/// A live property that PROPPATCH may change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Settable {
+    /// `oc:favorite`.
+    Favorite,
+    /// `nc:creation_time`, which Nextcloud lets clients set as well.
+    CreationTime,
+}
+
+/// Which settable live property `prop` is, if any.
+pub fn settable_live(prop: &DavProp) -> Option<Settable> {
+    match (prop.namespace.as_deref(), prop.name.as_str()) {
+        (Some(NS_OC), "favorite") => Some(Settable::Favorite),
+        (Some(NS_NC), "creation_time") => Some(Settable::CreationTime),
+        _ => None,
+    }
 }
 
 /// `oc:id`: the file id zero-padded to eight digits, followed by the instance id.
@@ -70,6 +83,7 @@ pub fn live_prop(prop: &DavProp, entry: &Entry, instance_id: &str) -> Option<Vec
         (NS_OC, "favorite") => u8::from(entry.favorite).to_string(),
         (NS_OC, "size") => entry.size.to_string(),
         (NS_NC, "has-preview") => "false".to_owned(),
+        (NS_NC, "creation_time") => entry.creation_time.to_string(),
         _ => return None,
     };
     let name = &prop.name;
@@ -79,17 +93,31 @@ pub fn live_prop(prop: &DavProp, entry: &Entry, instance_id: &str) -> Option<Vec
     )
 }
 
-/// Parses the value of a PROPPATCH `oc:favorite` element: `1`/`true` sets, `0`/`false` or an
-/// empty element clears.
-pub fn parse_favorite(prop: &DavProp) -> Option<bool> {
-    let text = match &prop.xml {
+/// The trimmed text of a PROPPATCH property element; empty for an empty element.
+fn prop_text(prop: &DavProp) -> Option<String> {
+    Some(match &prop.xml {
         Some(xml) => xmltree::Element::parse(xml.as_slice())
             .ok()?
             .get_text()
             .map(|text| text.trim().to_owned())
             .unwrap_or_default(),
         None => String::new(),
-    };
+    })
+}
+
+/// Parses the value of a PROPPATCH `nc:creation_time` element: UNIX seconds, a fraction
+/// truncated as for `X-OC-CTime`. Negative or empty values are refused.
+pub fn parse_creation_time(prop: &DavProp) -> Option<i64> {
+    prop_text(prop)
+        .as_deref()
+        .and_then(crate::ctx::oc_time_seconds)
+        .filter(|&seconds| seconds >= 0)
+}
+
+/// Parses the value of a PROPPATCH `oc:favorite` element: `1`/`true` sets, `0`/`false` or an
+/// empty element clears.
+pub fn parse_favorite(prop: &DavProp) -> Option<bool> {
+    let text = prop_text(prop)?;
     match text.as_str() {
         "1" | "true" => Some(true),
         "" | "0" | "false" => Some(false),
@@ -126,6 +154,7 @@ mod tests {
             modified: UNIX_EPOCH,
             size: 12,
             favorite: true,
+            creation_time: 1_700_000_000,
             permissions: "GDNVW",
         }
     }
@@ -167,6 +196,10 @@ mod tests {
         assert!(render(NS_OC, "favorite").unwrap().contains(">1<"));
         assert!(render(NS_OC, "size").unwrap().contains(">12<"));
         assert!(render(NS_NC, "has-preview").unwrap().contains(">false<"));
+        assert_eq!(
+            render(NS_NC, "creation_time").unwrap(),
+            "<nc:creation_time xmlns:nc=\"http://nextcloud.org/ns\">1700000000</nc:creation_time>"
+        );
         assert_eq!(render(NS_OC, "unknown"), None);
         assert_eq!(render("urn:other", "fileid"), None);
 
@@ -195,5 +228,29 @@ mod tests {
         assert_eq!(set(""), Some(false));
         assert_eq!(set("maybe"), None);
         assert_eq!(parse_favorite(&prop(NS_OC, "favorite", None)), Some(false));
+    }
+
+    #[test]
+    fn creation_times_parse() {
+        let set = |value: &str| {
+            parse_creation_time(&prop(
+                NS_NC,
+                "creation_time",
+                Some(&format!(
+                    "<nc:creation_time xmlns:nc=\"{NS_NC}\">{value}</nc:creation_time>"
+                )),
+            ))
+        };
+        assert_eq!(set("1700000000"), Some(1_700_000_000));
+        assert_eq!(set(" 1700000000.75 "), Some(1_700_000_000));
+        assert_eq!(set("0"), Some(0));
+        for invalid in ["", "-5", "yesterday", "1e9"] {
+            assert_eq!(set(invalid), None, "{invalid:?}");
+        }
+        assert_eq!(
+            settable_live(&prop(NS_NC, "creation_time", None)),
+            Some(Settable::CreationTime)
+        );
+        assert_eq!(settable_live(&prop(NS_NC, "has-preview", None)), None);
     }
 }

@@ -43,6 +43,8 @@ pub struct Entry {
     pub size: u64,
     /// `oc:favorite`.
     pub favorite: bool,
+    /// `nc:creation_time`: UNIX seconds as a client reported them, 0 if none did.
+    pub creation_time: i64,
     /// `oc:permissions` / `X-NC-Permissions`.
     pub permissions: &'static str,
 }

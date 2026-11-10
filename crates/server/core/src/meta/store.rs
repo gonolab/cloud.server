@@ -63,6 +63,9 @@ pub struct FileRow {
     pub size: u64,
     /// Favorite flag (`oc:favorite`).
     pub favorite: bool,
+    /// Creation time as a client reported it (`X-OC-CTime`, `nc:creation_time`), UNIX
+    /// seconds; 0 when none did.
+    pub creation_time: i64,
 }
 
 /// What the file system reports about an entry.
@@ -152,6 +155,7 @@ struct Row {
     mtime_ns: i64,
     size: i64,
     favorite: bool,
+    creation_time: i64,
 }
 
 impl From<Row> for FileRow {
@@ -164,11 +168,12 @@ impl From<Row> for FileRow {
             mtime_ns: row.mtime_ns,
             size: u64::try_from(row.size).unwrap_or(0),
             favorite: row.favorite,
+            creation_time: row.creation_time,
         }
     }
 }
 
-const COLUMNS: &str = "id, rel_path, is_dir, etag, mtime_ns, size, favorite";
+const COLUMNS: &str = "id, rel_path, is_dir, etag, mtime_ns, size, favorite, creation_time";
 
 /// The ETag reported for a file whose metadata was not written by the server: a pure function
 /// of the file id and what the file system reports.
@@ -626,7 +631,8 @@ impl MetaStore {
     ///
     /// `entries` lists what the copy produced on disk, as paths relative to `to` (the root
     /// entry is [`RelPath::root`]), parents before children. Every copied entry gets a new
-    /// id; dead properties are copied from the corresponding source entries, favorites are not.
+    /// id; dead properties and creation times are copied from the corresponding source
+    /// entries, favorites are not.
     pub async fn record_copy(
         &self,
         owner: i64,
@@ -671,7 +677,7 @@ impl MetaStore {
                 stat.size = dir_sizes.get(relative).copied().unwrap_or(0);
             }
             let rel = to.join_path(relative);
-            let row = insert(&mut tx, owner, &rel, stat, Etag::Written).await?;
+            let mut row = insert(&mut tx, owner, &rel, stat, Etag::Written).await?;
             if let Some(source_id) = sources.get(relative) {
                 sqlx::query(
                     "INSERT INTO dead_props (file_id, namespace, name, xml) \
@@ -680,6 +686,15 @@ impl MetaStore {
                 .bind(row.id)
                 .bind(source_id)
                 .execute(&mut *tx)
+                .await?;
+                row.creation_time = sqlx::query_scalar(
+                    "UPDATE files SET creation_time = \
+                     (SELECT creation_time FROM files WHERE id = ?2) \
+                     WHERE id = ?1 RETURNING creation_time",
+                )
+                .bind(row.id)
+                .bind(source_id)
+                .fetch_one(&mut *tx)
                 .await?;
             }
             top.get_or_insert(row);
@@ -901,6 +916,19 @@ impl MetaStore {
         Ok(report)
     }
 
+    /// Sets the creation time a client reported (`X-OC-CTime`, `nc:creation_time`), in UNIX
+    /// seconds. Not content, so ETags stay the same.
+    pub async fn set_creation_time(&self, file_id: i64, seconds: i64) -> Result<()> {
+        let mut tx = db::begin_immediate(&self.pool).await?;
+        sqlx::query("UPDATE files SET creation_time = ?2 WHERE id = ?1")
+            .bind(file_id)
+            .bind(seconds.max(0))
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
     /// Sets or clears the favorite flag. Favorites are not content, so ETags stay the same.
     pub async fn set_favorite(&self, file_id: i64, favorite: bool) -> Result<()> {
         let mut tx = db::begin_immediate(&self.pool).await?;
@@ -1023,6 +1051,7 @@ async fn insert(
         mtime_ns: stat.mtime_ns,
         size: stat.size,
         favorite: false,
+        creation_time: 0,
     })
 }
 

@@ -281,6 +281,7 @@ impl ScopedFs {
             modified: time_from_ns(stat.mtime_ns),
             size: if stat.is_dir { row.size } else { stat.size },
             favorite: row.favorite,
+            creation_time: row.creation_time,
         }
     }
 
@@ -317,6 +318,7 @@ impl ScopedFs {
             modified,
             size,
             favorite: false,
+            creation_time: 0,
             permissions: props::permissions(Kind::Dir, false, false, true),
         }))
     }
@@ -485,12 +487,21 @@ impl ScopedFs {
         stat: DiskStat,
     ) -> FsResult<Arc<Entry>> {
         let storage = location.storage().cloned().ok_or(FsError::Forbidden)?;
-        let row = self
+        let mut row = self
             .inner
             .meta
             .record_write(ctx.identity().user_id, &storage, stat)
             .await
             .map_err(db_error)?;
+        // Only an upload that reports a creation time changes it, as on Nextcloud.
+        if let Some(seconds) = ctx.request().oc_ctime {
+            self.inner
+                .meta
+                .set_creation_time(row.id, seconds)
+                .await
+                .map_err(db_error)?;
+            row.creation_time = seconds;
+        }
         Ok(self.remember_row(ctx, location, &row, stat))
     }
 
@@ -893,19 +904,28 @@ impl ScopedFs {
 
         let mut statuses = Vec::with_capacity(patch.len());
         let mut favorite = None;
+        let mut creation_time = None;
         let mut changes = Vec::new();
         for (is_set, prop) in patch {
-            let status = if props::is_settable_live(&prop) {
-                match if is_set {
-                    props::parse_favorite(&prop)
-                } else {
-                    Some(false)
-                } {
-                    Some(value) => {
-                        favorite = Some(value);
+            let status = if let Some(settable) = props::settable_live(&prop) {
+                match (settable, is_set) {
+                    (props::Settable::Favorite, true) => {
+                        props::parse_favorite(&prop).map_or(StatusCode::CONFLICT, |value| {
+                            favorite = Some(value);
+                            StatusCode::OK
+                        })
+                    }
+                    (props::Settable::Favorite, false) => {
+                        favorite = Some(false);
                         StatusCode::OK
                     }
-                    None => StatusCode::CONFLICT,
+                    (props::Settable::CreationTime, true) => props::parse_creation_time(&prop)
+                        .map_or(StatusCode::CONFLICT, |seconds| {
+                            creation_time = Some(seconds);
+                            StatusCode::OK
+                        }),
+                    // A time cannot be removed, only replaced (Nextcloud refuses it too).
+                    (props::Settable::CreationTime, false) => StatusCode::FORBIDDEN,
                 }
             } else if props::is_live(&prop) {
                 StatusCode::FORBIDDEN
@@ -942,6 +962,11 @@ impl ScopedFs {
         detached(async move {
             if let Some(favorite) = favorite {
                 meta.set_favorite(file_id, favorite)
+                    .await
+                    .map_err(db_error)?;
+            }
+            if let Some(seconds) = creation_time {
+                meta.set_creation_time(file_id, seconds)
                     .await
                     .map_err(db_error)?;
             }

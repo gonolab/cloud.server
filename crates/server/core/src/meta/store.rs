@@ -304,6 +304,17 @@ impl MetaStore {
         Ok(row.map(FileRow::from))
     }
 
+    /// The row of `owner`'s entry with file id `id`, wherever it is now.
+    pub async fn get_by_id(&self, owner: i64, id: i64) -> Result<Option<FileRow>> {
+        let sql = format!("SELECT {COLUMNS} FROM files WHERE owner_id = ?1 AND id = ?2");
+        let row: Option<Row> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
+            .bind(owner)
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.map(FileRow::from))
+    }
+
     /// The rows of several entries, keyed by path. Missing entries are simply absent.
     pub async fn get_many(
         &self,

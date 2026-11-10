@@ -315,16 +315,42 @@ pub async fn authenticate(
     now: i64,
 ) -> Result<Option<Device>> {
     let hash = hash_token(token.expose_secret());
-    let row: Option<DeviceRow> = sqlx::query_as(
-        "SELECT a.id, a.user_id, a.expires_at, a.last_used_at, u.username, u.display_name, \
-         u.enabled FROM app_passwords a JOIN users u ON u.id = a.user_id \
-         WHERE a.token_hash = ?1",
-    )
+    let row: Option<DeviceRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{DEVICE_QUERY} WHERE a.token_hash = ?1"
+    )))
     .bind(&hash[..])
     .fetch_optional(pool)
     .await?;
-    let Some(row) = row else { return Ok(None) };
-    if row.username != username || !row.enabled || row.expires_at.is_some_and(|at| at <= now) {
+    match row {
+        Some(row) if row.username == username => device_from_row(pool, row, now).await,
+        _ => Ok(None),
+    }
+}
+
+/// App password `id` as a [`Device`], if it can still authenticate at `now` (see
+/// [`is_active`]). For requests that carry another credential tied to an app password, such as
+/// a direct download link.
+pub async fn device(pool: &Pool, id: i64, now: i64) -> Result<Option<Device>> {
+    let row: Option<DeviceRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{DEVICE_QUERY} WHERE a.id = ?1"
+    )))
+    .bind(id)
+    .fetch_optional(pool)
+    .await?;
+    match row {
+        Some(row) => device_from_row(pool, row, now).await,
+        None => Ok(None),
+    }
+}
+
+/// The columns of [`DeviceRow`].
+const DEVICE_QUERY: &str = "SELECT a.id, a.user_id, a.expires_at, a.last_used_at, u.username, \
+     u.display_name, u.enabled FROM app_passwords a JOIN users u ON u.id = a.user_id";
+
+/// The device of `row` with its scopes, unless the account is disabled or the app password
+/// expired at `now`.
+async fn device_from_row(pool: &Pool, row: DeviceRow, now: i64) -> Result<Option<Device>> {
+    if !row.enabled || row.expires_at.is_some_and(|at| at <= now) {
         return Ok(None);
     }
 

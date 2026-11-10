@@ -64,6 +64,8 @@ pub enum Outcome {
     NotFound,
     /// The call is not allowed for this user.
     Forbidden,
+    /// The parameters are invalid.
+    BadRequest,
 }
 
 /// A rendered OCS response.
@@ -85,6 +87,7 @@ impl Reply {
             Outcome::Unauthorized => (StatusCode::UNAUTHORIZED, "Current user is not logged in"),
             Outcome::NotFound => (StatusCode::NOT_FOUND, "Not found"),
             Outcome::Forbidden => (StatusCode::FORBIDDEN, "Forbidden"),
+            Outcome::BadRequest => (StatusCode::BAD_REQUEST, "Bad request"),
         };
         let statuscode = match (version, outcome) {
             (ApiVersion::V1, Outcome::Ok) => 100,

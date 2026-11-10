@@ -246,6 +246,99 @@ async fn ocs_user_lookup_of_another_user_is_refused() {
     response.expect(&[403, 404]);
 }
 
+/// Asks for a direct download link the way Nextcloud Android does (`?format=json`, form body);
+/// with `ios_style`, the way NextcloudKit does (`format` in the form, `Accept: application/json`).
+async fn direct_link(ctx: &Ctx, dav: &Dav, form: &str, ios_style: bool) -> Resp {
+    let (path, body) = if ios_style {
+        (
+            "/ocs/v2.php/apps/dav/api/v1/direct".to_owned(),
+            format!("{form}&format=json"),
+        )
+    } else {
+        (
+            "/ocs/v2.php/apps/dav/api/v1/direct?format=json".to_owned(),
+            form.to_owned(),
+        )
+    };
+    let mut request = dav
+        .request("POST", &ctx.url(&path))
+        .header("OCS-APIRequest", "true")
+        .header("Content-Type", "application/x-www-form-urlencoded");
+    if ios_style {
+        request = request.header("Accept", "application/json");
+    }
+    dav.send(request.body(body)).await
+}
+
+/// Both apps play video and audio that is not downloaded yet by handing a link from
+/// `apps/dav/api/v1/direct` to the system player, which sends no credentials.
+#[tokio::test]
+async fn direct_links_stream_files_without_credentials() {
+    let Some(ctx) = Ctx::new().await else { return };
+    let dav = ctx.dav();
+    let rel = ctx.path("clip.mp4");
+    dav.write(&rel, "0123456789").await;
+    let file_id = dav.fileid(&rel).await;
+
+    for ios_style in [false, true] {
+        let response = direct_link(&ctx, &dav, &format!("fileId={file_id}"), ios_style).await;
+        response.expect(&[200]);
+        let url = response.json()["ocs"]["data"]["url"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{}", response.describe()))
+            .to_owned();
+        assert!(
+            url.starts_with(&ctx.url("/remote.php/direct/")),
+            "{url} is not below the public origin"
+        );
+        let ranged =
+            gono_acceptance::dav::send(&ctx.http, ctx.http.get(&url).header("Range", "bytes=1-3"))
+                .await;
+        ranged.expect(&[206]);
+        assert_eq!(ranged.body, b"123");
+    }
+
+    let folder = direct_link(
+        &ctx,
+        &dav,
+        &format!("fileId={}", dav.fileid(&ctx.dir).await),
+        false,
+    )
+    .await;
+    folder.expect(&[400]);
+    let unknown = gono_acceptance::dav::send(
+        &ctx.http,
+        ctx.http.get(ctx.url("/remote.php/direct/no-such-token")),
+    )
+    .await;
+    unknown.expect(&[404]);
+    if let Some(user2) = ctx.user2() {
+        let dav2 = ctx.dav_as(&user2);
+        let foreign = direct_link(&ctx, &dav2, &format!("fileId={file_id}"), false).await;
+        foreign.expect(&[404]);
+
+        // The second user's name contains `@` (see `run-new.sh`); the link resolves it too.
+        dav2.create_dir(&ctx.dir).await;
+        ctx.cleanup_later(&user2, &ctx.dir);
+        dav2.write(&ctx.path("own.mp3"), "own audio").await;
+        let own = direct_link(
+            &ctx,
+            &dav2,
+            &format!("fileId={}", dav2.fileid(&ctx.path("own.mp3")).await),
+            false,
+        )
+        .await;
+        own.expect(&[200]);
+        let url = own.json()["ocs"]["data"]["url"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let streamed = gono_acceptance::dav::send(&ctx.http, ctx.http.get(&url)).await;
+        streamed.expect(&[200]);
+        assert_eq!(streamed.body, b"own audio");
+    }
+}
+
 // ---------------------------------------------------------------------------------------------
 // Live properties and OC-* headers
 // ---------------------------------------------------------------------------------------------

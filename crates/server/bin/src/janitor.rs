@@ -6,13 +6,14 @@
 //! - expired chunked upload sessions with their chunks, and chunk directories that belong to
 //!   no session ([`ChunkedUploads::purge`]);
 //! - expired Login Flow v2 sign-ins ([`login_flows::purge_expired`]);
-//! - expired browser sessions ([`web_sessions::purge_expired`]).
+//! - expired browser sessions ([`web_sessions::purge_expired`]);
+//! - expired direct download links ([`direct_downloads::purge_expired`]).
 //!
 //! Every pass is independent: a failure is logged and the next pass tries again.
 
 use std::time::Duration;
 
-use gono_server_core::{db, login_flows, web_sessions};
+use gono_server_core::{db, direct_downloads, login_flows, web_sessions};
 use gono_server_nextcloud::chunking::ChunkedUploads;
 use tokio::task::JoinHandle;
 
@@ -46,6 +47,11 @@ impl Janitor {
             Ok(0) => {}
             Ok(removed) => tracing::debug!(removed, "removed expired browser sessions"),
             Err(err) => tracing::warn!(error = %err, "cannot clean up browser sessions"),
+        }
+        match direct_downloads::purge_expired(&self.db, now).await {
+            Ok(0) => {}
+            Ok(removed) => tracing::debug!(removed, "removed expired direct download links"),
+            Err(err) => tracing::warn!(error = %err, "cannot clean up direct download links"),
         }
     }
 

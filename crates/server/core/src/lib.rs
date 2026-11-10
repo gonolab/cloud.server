@@ -14,6 +14,7 @@
 //! - [`uploads`]: chunked upload sessions.
 //! - [`login_flows`]: pending Login Flow v2 sign-ins.
 //! - [`web_sessions`]: browser sessions of the server's HTML pages.
+//! - [`direct_downloads`]: links that let media players stream a file without credentials.
 //! - [`rescan`]: walking a user's tree on disk for `gono-cloud rescan`.
 //! - [`secret`]: random tokens and their digests.
 //! - [`stats`]: counts shown on the web admin UI.
@@ -22,6 +23,7 @@
 pub mod app_passwords;
 pub mod config;
 pub mod db;
+pub mod direct_downloads;
 pub mod error;
 pub mod locks;
 pub mod login_flows;

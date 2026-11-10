@@ -11,6 +11,7 @@
 //! | `GET` | `cloud/users/<id>` | app password | the signed-in user if `<id>` is them, 404 otherwise |
 //! | `DELETE` | `core/apppassword` | app password | revokes the app password of the request (clients call it when an account is removed) |
 //! | `GET` | `core/navigation/apps` | app password | an empty list (there are no web apps to link to) |
+//! | `POST` | `apps/dav/api/v1/direct` | app password | a direct download link for a media player ([`crate::direct`]) |
 //!
 //! Anything else answers an OCS 404 without looking at credentials.
 
@@ -34,7 +35,11 @@ use serde_json::{Value, json};
 use crate::{
     app::{AppState, Rejection, authenticate},
     auth::basic_challenge,
+    direct,
 };
+
+/// Largest form body an OCS endpoint reads.
+const MAX_FORM_BYTES: usize = 8 * 1024;
 
 /// Version of this server build, reported in the `gono_cloud` capability.
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -66,6 +71,7 @@ enum Endpoint {
     User(String),
     RevokeAppPassword,
     NavigationApps,
+    DirectLink,
     Unknown,
 }
 
@@ -87,6 +93,7 @@ fn endpoint(method: &Method, rest: &str) -> Endpoint {
         ("GET", "cloud/user") => Endpoint::CurrentUser,
         ("DELETE", "core/apppassword") => Endpoint::RevokeAppPassword,
         ("GET", "core/navigation/apps") => Endpoint::NavigationApps,
+        ("POST", "apps/dav/api/v1/direct") => Endpoint::DirectLink,
         ("GET", _) => rest
             .strip_prefix("cloud/users/")
             .filter(|id| !id.is_empty() && !id.contains('/'))
@@ -171,6 +178,23 @@ pub async fn ocs(
             }
         }
         Endpoint::NavigationApps => reply(version, format, &Outcome::Ok, json!([])),
+        Endpoint::DirectLink => {
+            let query = request.uri().query().map(str::to_owned);
+            let Ok(body) = axum::body::to_bytes(request.into_body(), MAX_FORM_BYTES).await else {
+                return reply(version, format, &Outcome::BadRequest, json!([]));
+            };
+            let link_request = direct::LinkRequest::parse(query.as_deref(), &body);
+            match direct::create_link(&state, &identity, &link_request).await {
+                Ok(direct::Link::Created(url)) => {
+                    reply(version, format, &Outcome::Ok, json!({ "url": url }))
+                }
+                Ok(direct::Link::BadRequest) => {
+                    reply(version, format, &Outcome::BadRequest, json!([]))
+                }
+                Ok(direct::Link::NotFound) => reply(version, format, &Outcome::NotFound, json!([])),
+                Err(status) => status.into_response(),
+            }
+        }
         Endpoint::Capabilities | Endpoint::Unknown => unreachable!("answered above"),
     }
 }
@@ -227,6 +251,14 @@ mod tests {
         assert_eq!(
             endpoint(&Method::DELETE, "core/apppassword"),
             Endpoint::RevokeAppPassword
+        );
+        assert_eq!(
+            endpoint(&Method::POST, "apps/dav/api/v1/direct"),
+            Endpoint::DirectLink
+        );
+        assert_eq!(
+            endpoint(&Method::GET, "apps/dav/api/v1/direct"),
+            Endpoint::Unknown
         );
     }
 }

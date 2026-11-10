@@ -27,6 +27,9 @@ listed under "In scope" is deferred until after v1.
   - Directory ETag propagation: any change updates the ETag of every ancestor collection.
   - Favorites through `PROPPATCH` and the `filter-files` REPORT (used by the desktop client and
     the iOS app; the Android app lists favorites with `SEARCH`, see the open questions).
+  - Direct download links (`POST .../apps/dav/api/v1/direct`, `/remote.php/direct/<token>`),
+    through which the mobile apps stream video and audio that is not downloaded yet. A link
+    acts with the app password that asked for it and ends with it.
 - **Multiple users** with per-app-password mount scopes (`view` or `full`).
 - **notify_push** for real-time change notifications.
 - **Web admin UI**: server overview, accounts (create, enable and disable, admin role, display
@@ -135,8 +138,8 @@ These are resolved by testing against real clients, not by decision:
   (`crates/server/nextcloud/src/status.rs`), and tests keep the version between them.
 - The exact set of OCS endpoints the mobile apps call, and which of them can return empty
   results. Implemented: `cloud/capabilities`, `cloud/user`, `cloud/users/<own id>`,
-  `core/apppassword` (`DELETE`) and an empty `core/navigation/apps`; everything else answers
-  an OCS 404. `nextcloudcmd` 4.0.6 calls only `status.php`, the capabilities and
+  `core/apppassword` (`DELETE`), an empty `core/navigation/apps` and (since 2026-11-11)
+  `apps/dav/api/v1/direct`; everything else answers an OCS 404. `nextcloudcmd` 4.0.6 calls only `status.php`, the capabilities and
   `cloud/user`.
 
   Mobile apps (2026-11-10): both apps call the capabilities, `cloud/user` and (iOS)
@@ -155,7 +158,7 @@ These are resolved by testing against real clients, not by decision:
   | `OPTIONS /remote.php/dav` (looks for `SEARCH` in `Allow`) | yes | | see below |
   | `SEARCH /remote.php/dav` | yes | yes | see below |
   | `GET .../search/providers`, `.../search/providers/<id>/search` (unified search) | yes | yes | see below |
-  | `POST .../apps/dav/api/v1/direct` | yes | yes | see below |
+  | `POST .../apps/dav/api/v1/direct` | yes | yes | no playback of media that is not downloaded; implemented since 2026-11-11 |
 
   The gaps users notice (corrected 2026-11-11 after reading the sources of both apps):
 
@@ -169,11 +172,10 @@ These are resolved by testing against real clients, not by decision:
   - The search box: both apps search the server through unified search (OCS
     `search/providers`), not `SEARCH`. It answers 404, so neither app finds files on the
     server; iOS shows an error banner after the matches in the open folder.
-  - Video and audio playback: both apps play media that is not downloaded yet only by
+  - Video and audio playback (fixed): both apps play media that is not downloaded yet only by
     streaming it from a URL that `POST /ocs/v2.php/apps/dav/api/v1/direct` hands out, without
-    a fallback. That endpoint answers 404, so such files do not play; downloaded files play.
+    a fallback. That endpoint answered 404, so such files did not play; it is implemented now.
 
-  Supporting a subset of `SEARCH` (favorites, media types, recent files, file names), unified
-  search and the `direct` endpoint is a decision for the maintainers; for v1 these are known
-  limitations. The apps show their Albums and trash bin entries regardless of the capabilities;
+  Supporting a subset of `SEARCH` (favorites, media types, recent files, file names) and
+  unified search is a decision for the maintainers; for v1 these are known limitations. The apps show their Albums and trash bin entries regardless of the capabilities;
   deletions stay permanent although the iOS trash bin view suggests otherwise.

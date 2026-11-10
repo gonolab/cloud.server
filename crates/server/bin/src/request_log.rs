@@ -1,7 +1,8 @@
 //! One log line per request, with secrets removed from the request target.
 //!
 //! Some endpoints carry credentials in the URL: Login Flow v2 puts its login token into the
-//! path (`/login/v2/flow/<token>`), and clients may put tokens into query strings. The logged
+//! path (`/login/v2/flow/<token>`), so do direct download links (`/remote.php/direct/<token>`),
+//! and clients may put tokens into query strings. The logged
 //! target keeps the path but replaces those parts with `<redacted>`; query parameter names are
 //! kept, their values are dropped (except a few harmless ones such as `format`). Headers, and
 //! with them `Authorization`, are never logged.
@@ -18,7 +19,11 @@ use axum::{
 use crate::{app::AppState, client_ip::client_ip};
 
 /// Path prefixes followed by a secret token.
-const TOKEN_PATHS: &[&str] = &["/login/v2/flow/", "/index.php/login/v2/flow/"];
+const TOKEN_PATHS: &[&str] = &[
+    "/login/v2/flow/",
+    "/index.php/login/v2/flow/",
+    crate::direct::DIRECT_PATH,
+];
 
 /// Query parameters whose values may be logged.
 const PLAIN_QUERY_PARAMS: &[&str] = &["format"];
@@ -94,6 +99,10 @@ mod tests {
         assert_eq!(
             redacted("/login/v2/flow/abc/extra"),
             "/login/v2/flow/<redacted>"
+        );
+        assert_eq!(
+            redacted("/remote.php/direct/s3cr3t"),
+            "/remote.php/direct/<redacted>"
         );
         assert_eq!(
             redacted("/index.php/login/v2/poll?token=s3cr3t&format=json"),

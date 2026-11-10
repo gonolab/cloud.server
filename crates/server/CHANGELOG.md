@@ -16,6 +16,11 @@ compatible within a major version: released clients keep working with newer serv
   rclone's Nextcloud backend sends them, so that `rclone` with `vendor = nextcloud` can upload
   files larger than its chunk size. The ranges must cover the file from byte 0 without gaps or
   overlaps; a session holds either numbered chunks or byte ranges.
+- Direct download links (`POST /ocs/v2.php/apps/dav/api/v1/direct`, then
+  `GET /remote.php/direct/<token>` without credentials), through which the Nextcloud mobile
+  apps stream video and audio that is not downloaded yet; before, such files did not play. A
+  link expires after 8 hours (at most a day) and ends with the app password that asked for it
+  or the file it names.
 
 ### Changed
 

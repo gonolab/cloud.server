@@ -83,7 +83,7 @@ Add the account again (1.1–1.5) for the following sections.
 |---|---|---|
 | 4.1 | Open a text file, a photo and the large file. | They open with the right content. |
 | 4.2 | Make a file available offline, change it on another device, refresh. (Android 35 has no offline switch for files, only "Sync" for folders; there, download the file, change it and open it again.) | The app downloads the new version. |
-| 4.3 | Play the MP4 and the MP3 without downloading them first. | Known limitation for v1 (no `direct` endpoint): the player shows an error. After downloading, they play. |
+| 4.3 | Play the MP4 and the MP3 without downloading them first; seek in the video. | They play while streaming, and seeking works: the server log shows `POST .../apps/dav/api/v1/direct` (200) and `GET /remote.php/direct/<redacted>` (206 for ranges). |
 | 4.4 | iOS: make a folder with files and a subfolder available offline, then go offline and open the files. | The files directly in the folder were downloaded (as on Nextcloud, the app's `Depth: infinity` listing returns one level). |
 
 ## 5. Favorites

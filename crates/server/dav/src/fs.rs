@@ -52,6 +52,7 @@ use sha2::{Digest, Sha256};
 use crate::{
     ctx::{Ctx, PropfindKind},
     file::{CreatedFile, ReadFile, WriteFile},
+    identity::Identity,
     metadata::{DavMeta, Entry, Kind, time_from_ns},
     props,
     resolve::{self, Location},
@@ -145,6 +146,29 @@ impl ScopedFs {
     /// The installation's instance id (suffix of `oc:id`).
     pub fn instance_id(&self) -> &str {
         &self.inner.instance_id
+    }
+
+    /// Where the entry with file id `file_id` is for `identity`: its client path, and whether it
+    /// is a directory. `None` if the identity cannot reach it: it belongs to another account,
+    /// lies outside the identity's mounts, or no longer exists. Ids stay with an entry when it
+    /// is renamed or moved.
+    pub async fn locate_by_id(
+        &self,
+        identity: &Identity,
+        file_id: i64,
+    ) -> FsResult<Option<(RelPath, bool)>> {
+        let Some(row) = self
+            .inner
+            .meta
+            .get_by_id(identity.user_id, file_id)
+            .await
+            .map_err(db_error)?
+        else {
+            return Ok(None);
+        };
+        let client = (0..identity.mounts.len())
+            .find_map(|index| resolve::client_for_storage(identity, index, &row.rel_path));
+        Ok(client.map(|client| (client, row.is_dir)))
     }
 
     /// Bytes stored by `owner` (the recursive size of the root) and the free space of the

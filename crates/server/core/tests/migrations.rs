@@ -84,6 +84,7 @@ async fn migrations_apply_to_an_empty_database() {
             "app_passwords",
             "change_log",
             "dead_props",
+            "direct_downloads",
             "files",
             "locks",
             "login_flows",

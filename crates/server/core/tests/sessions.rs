@@ -362,3 +362,136 @@ async fn sessions_of_a_user_can_be_ended_except_one() {
             .is_none()
     );
 }
+
+#[tokio::test]
+async fn direct_download_links_expire_and_follow_their_app_password_and_file() {
+    use gono_server_core::{
+        direct_downloads::{self, DirectDownload},
+        meta::{DiskStat, MetaStore},
+    };
+
+    let (_dir, pool, owner) = fixture().await;
+    let (device, _) = app_passwords::create(&pool, owner, "phone", Vec::new(), None)
+        .await
+        .unwrap();
+    let store = MetaStore::new(pool.clone());
+    let stat = DiskStat {
+        is_dir: false,
+        mtime_ns: 1,
+        size: 3,
+    };
+    let file = store
+        .record_write(owner, &RelPath::parse("a.mp4").unwrap(), stat)
+        .await
+        .unwrap()
+        .id;
+
+    let now = 1_000;
+    let token = direct_downloads::create(&pool, device, file, now, 60)
+        .await
+        .unwrap();
+    let token = token.expose_secret();
+    assert!(token.len() >= 60 && token.bytes().all(|b| b.is_ascii_alphanumeric()));
+    let link = DirectDownload {
+        app_password_id: device,
+        file_id: file,
+    };
+    assert_eq!(
+        direct_downloads::lookup(&pool, token, now + 59)
+            .await
+            .unwrap(),
+        Some(link)
+    );
+    assert_eq!(
+        direct_downloads::lookup(&pool, token, now + 60)
+            .await
+            .unwrap(),
+        None,
+        "expired"
+    );
+    assert_eq!(
+        direct_downloads::lookup(&pool, "other", now).await.unwrap(),
+        None
+    );
+    assert_eq!(
+        direct_downloads::purge_expired(&pool, now + 60)
+            .await
+            .unwrap(),
+        1
+    );
+
+    // Deleting the file or revoking the app password removes the link.
+    let first = direct_downloads::create(&pool, device, file, now, 60)
+        .await
+        .unwrap();
+    store
+        .record_delete(owner, &RelPath::parse("a.mp4").unwrap())
+        .await
+        .unwrap();
+    assert_eq!(
+        direct_downloads::lookup(&pool, first.expose_secret(), now)
+            .await
+            .unwrap(),
+        None
+    );
+    let file = store
+        .record_write(owner, &RelPath::parse("b.mp4").unwrap(), stat)
+        .await
+        .unwrap()
+        .id;
+    let second = direct_downloads::create(&pool, device, file, now, 60)
+        .await
+        .unwrap();
+    assert!(app_passwords::delete(&pool, owner, device).await.unwrap());
+    assert_eq!(
+        direct_downloads::lookup(&pool, second.expose_secret(), now)
+            .await
+            .unwrap(),
+        None
+    );
+}
+
+#[tokio::test]
+async fn devices_load_by_id_only_while_they_can_authenticate() {
+    let (_dir, pool, owner) = fixture().await;
+    let now = 1_000;
+    let (forever, _) = app_passwords::create(&pool, owner, "phone", Vec::new(), None)
+        .await
+        .unwrap();
+    let (expiring, _) = app_passwords::create(&pool, owner, "tablet", Vec::new(), Some(now + 10))
+        .await
+        .unwrap();
+    let device = app_passwords::device(&pool, forever, now)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(device.user_id, owner);
+    assert_eq!(device.scopes.len(), 1);
+    assert!(
+        app_passwords::device(&pool, expiring, now)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        app_passwords::device(&pool, expiring, now + 10)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        app_passwords::device(&pool, 9_999, now)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let alice = Username::new("alice").unwrap();
+    users::set_enabled(&pool, &alice, false).await.unwrap();
+    assert!(
+        app_passwords::device(&pool, forever, now)
+            .await
+            .unwrap()
+            .is_none(),
+        "disabled account"
+    );
+}

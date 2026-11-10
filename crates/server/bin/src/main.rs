@@ -6,6 +6,7 @@ mod auth;
 mod cli;
 mod client_ip;
 mod commands;
+mod direct;
 mod janitor;
 mod logging;
 mod login_flow;

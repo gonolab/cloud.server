@@ -11,6 +11,8 @@
 //! - `/remote.php/dav/uploads/<user>/...`: Nextcloud chunked upload v2
 //!   ([`gono_server_nextcloud::chunking`]). Other users' namespaces and app passwords without any
 //!   writable mount are refused with 403 before the protocol is looked at.
+//! - `GET`/`HEAD /remote.php/direct/<token>`: direct download links for media players, without
+//!   credentials (see [`crate::direct`]).
 //! - Everything else under `/remote.php/dav`, the root included: authenticated first, then 404
 //!   ([`dav_namespace`]), so that anonymous probes see a Basic challenge as on Nextcloud.
 //! - On both WebDAV routes, after authentication, the XML body of `PROPFIND`, `PROPPATCH`,
@@ -56,7 +58,7 @@ use crate::{
     admin::{self, Admin},
     auth::{AuthOutcome, Authenticator, basic_challenge},
     client_ip::client_ip,
-    login_flow, nextcloud, notify_push,
+    direct, login_flow, nextcloud, notify_push,
     ratelimit::RateLimiter,
     request_log,
     web::Web,
@@ -140,6 +142,7 @@ pub fn router(state: AppState) -> Router {
             get(login_flow::page).post(login_flow::submit),
         );
     let mut router = Router::new()
+        .route("/remote.php/direct/{token}", get(direct::download))
         .route("/healthz", get(healthz))
         .merge(nextcloud)
         .merge(dav);
@@ -1101,6 +1104,158 @@ mod tests {
             )
             .await;
         assert_eq!(lock.status, StatusCode::FORBIDDEN);
+    }
+
+    async fn direct_link(f: &Fixture, password: &str, form: &str) -> Reply {
+        f.send(
+            "POST",
+            "/ocs/v2.php/apps/dav/api/v1/direct?format=json",
+            Some(password),
+            &[("Content-Type", "application/x-www-form-urlencoded")],
+            form,
+        )
+        .await
+    }
+
+    /// The path of the link in a successful answer of [`direct_link`].
+    fn link_path(reply: &Reply) -> String {
+        assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
+        let body: serde_json::Value = serde_json::from_str(&reply.body).unwrap();
+        let url = body["ocs"]["data"]["url"].as_str().unwrap();
+        let path = url.strip_prefix("http://localhost:8080").unwrap();
+        assert!(path.starts_with("/remote.php/direct/"), "{url}");
+        path.to_owned()
+    }
+
+    #[tokio::test]
+    async fn direct_links_serve_files_without_credentials() {
+        let f = fixture().await;
+        let put = f
+            .send(
+                "PUT",
+                &format!("{FILES}/movie.mp4"),
+                Some(&f.full),
+                &[],
+                "0123456789",
+            )
+            .await;
+        assert_eq!(put.status, StatusCode::CREATED);
+        let mkcol = f
+            .send("MKCOL", &format!("{FILES}/dir"), Some(&f.full), &[], "")
+            .await;
+        assert_eq!(mkcol.status, StatusCode::CREATED);
+        let id_of = |path: &'static str| {
+            let db = f.state.db.clone();
+            async move {
+                sqlx::query_scalar::<_, i64>("SELECT id FROM files WHERE rel_path = ?1")
+                    .bind(path)
+                    .fetch_one(&db)
+                    .await
+                    .unwrap()
+            }
+        };
+        let movie = id_of("movie.mp4").await;
+
+        // A read-only app password may stream; the link needs no credentials.
+        let link = link_path(&direct_link(&f, &f.view, &format!("fileId={movie}")).await);
+        let ranged = f
+            .send("GET", &link, None, &[("Range", "bytes=2-5")], "")
+            .await;
+        assert_eq!(ranged.status, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(ranged.body, "2345");
+        assert_eq!(ranged.header("content-range"), "bytes 2-5/10");
+        assert_eq!(ranged.header("content-type"), "video/mp4");
+        let head = f.send("HEAD", &link, None, &[], "").await;
+        assert_eq!(head.status, StatusCode::OK);
+        assert_eq!(head.header("content-length"), "10");
+
+        // The link follows the file when it moves.
+        let moved = f
+            .send(
+                "MOVE",
+                &format!("{FILES}/movie.mp4"),
+                Some(&f.full),
+                &[(
+                    "Destination",
+                    "http://localhost/remote.php/dav/files/alice/dir/m.mp4",
+                )],
+                "",
+            )
+            .await;
+        assert_eq!(moved.status, StatusCode::CREATED);
+        assert_eq!(f.send("GET", &link, None, &[], "").await.body, "0123456789");
+
+        // Refused requests.
+        for (form, status) in [
+            (
+                format!("fileId={}", id_of("dir").await),
+                StatusCode::BAD_REQUEST,
+            ),
+            ("fileId=999999".to_owned(), StatusCode::NOT_FOUND),
+            (String::new(), StatusCode::BAD_REQUEST),
+            (
+                format!("fileId={movie}&expirationTime=0"),
+                StatusCode::BAD_REQUEST,
+            ),
+            (
+                format!("fileId={movie}&expirationTime=86401"),
+                StatusCode::BAD_REQUEST,
+            ),
+        ] {
+            let reply = direct_link(&f, &f.full, &form).await;
+            assert_eq!(reply.status, status, "{form}: {}", reply.body);
+        }
+        let anonymous = f
+            .send(
+                "POST",
+                "/ocs/v2.php/apps/dav/api/v1/direct",
+                None,
+                &[],
+                "fileId=1",
+            )
+            .await;
+        assert_eq!(anonymous.status, StatusCode::UNAUTHORIZED);
+        let unknown = f
+            .send("GET", "/remote.php/direct/not-a-token", None, &[], "")
+            .await;
+        assert_eq!(unknown.status, StatusCode::NOT_FOUND);
+
+        // Revoking the app password ends its links; other links stay until the file goes.
+        let other = link_path(
+            &direct_link(&f, &f.full, &format!("fileId={movie}&expirationTime=60")).await,
+        );
+        let revoke = f
+            .send(
+                "DELETE",
+                "/ocs/v2.php/core/apppassword",
+                Some(&f.view),
+                &[],
+                "",
+            )
+            .await;
+        assert_eq!(revoke.status, StatusCode::OK);
+        assert_eq!(
+            f.send("GET", &link, None, &[], "").await.status,
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            f.send("GET", &other, None, &[], "").await.status,
+            StatusCode::OK
+        );
+        let delete = f
+            .send(
+                "DELETE",
+                &format!("{FILES}/dir/m.mp4"),
+                Some(&f.full),
+                &[],
+                "",
+            )
+            .await;
+        assert_eq!(delete.status, StatusCode::NO_CONTENT);
+        assert_eq!(
+            f.send("GET", &other, None, &[], "").await.status,
+            StatusCode::NOT_FOUND
+        );
     }
 
     #[tokio::test]

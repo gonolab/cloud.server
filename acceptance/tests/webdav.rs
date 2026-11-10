@@ -147,14 +147,30 @@ async fn propfind_depth_1_lists_direct_children() {
     assert!(sub.is_collection());
 }
 
+/// Nextcloud (SabreDAV without `enablePropfindDepthInfinity`) answers `Depth: infinity` like
+/// `Depth: 1`. The Nextcloud iOS app lists folders made available offline that way and
+/// downloads nothing when it gets an error.
 #[tokio::test]
-async fn propfind_depth_infinity_is_rejected() {
+async fn propfind_depth_infinity_is_answered_like_depth_1() {
     let Some(ctx) = Ctx::new().await else { return };
-    let response = ctx
-        .dav()
+    let dav = ctx.dav();
+    dav.create_dir(&ctx.path("sub")).await;
+    dav.write(&ctx.path("sub/deep.txt"), "deep").await;
+    dav.write(&ctx.path("top.txt"), "top").await;
+    let multistatus = dav
         .propfind(&ctx.dir, "infinity", PROPFIND_STANDARD)
-        .await;
-    response.expect(&[403]);
+        .await
+        .expect(&[207])
+        .multistatus();
+    let mut paths = multistatus.paths();
+    paths.sort();
+    let mut expected = vec![
+        dav.href_path(&ctx.dir),
+        dav.href_path(&ctx.path("sub")),
+        dav.href_path(&ctx.path("top.txt")),
+    ];
+    expected.sort();
+    assert_eq!(paths, expected);
 }
 
 #[tokio::test]

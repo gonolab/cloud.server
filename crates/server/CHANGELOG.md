@@ -36,6 +36,8 @@ compatible within a major version: released clients keep working with newer serv
   further wrong credentials get `429`. Before, one failing client (an old device, a WebDAV app
   set up with the web login password) locked out every device behind the same address. The web
   login has a limiter of its own.
+- `PROPFIND` with `Depth: infinity` is answered like `Depth: 1`, as Nextcloud does, instead of
+  `403`. Folders made available offline in the Nextcloud iOS app downloaded nothing.
 
 ## [1.0.0] - 2026-11-10
 

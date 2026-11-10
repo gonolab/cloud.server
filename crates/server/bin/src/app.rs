@@ -638,7 +638,7 @@ mod tests {
                 "",
             )
             .await;
-        assert_eq!(infinity.status, StatusCode::FORBIDDEN);
+        assert_eq!(infinity.status, StatusCode::MULTI_STATUS);
         for reply in [&propfind, &report, &infinity] {
             assert!(reply.body.contains(r#"xmlns:d="DAV:""#), "{}", reply.body);
             assert!(!reply.body.contains("<D:"), "{}", reply.body);
@@ -969,6 +969,17 @@ mod tests {
     #[tokio::test]
     async fn protocol_preflight_checks() {
         let f = fixture().await;
+        // Depth infinity lists the direct children only, like Depth 1 (and Nextcloud).
+        for (method, path, body) in [
+            ("MKCOL", "/a", ""),
+            ("MKCOL", "/a/b", ""),
+            ("PUT", "/a/b/c.txt", "c"),
+        ] {
+            let reply = f
+                .send(method, &format!("{FILES}{path}"), Some(&f.full), &[], body)
+                .await;
+            assert_eq!(reply.status, StatusCode::CREATED, "{method} {path}");
+        }
         let infinity = f
             .send(
                 "PROPFIND",
@@ -978,8 +989,13 @@ mod tests {
                 "",
             )
             .await;
-        assert_eq!(infinity.status, StatusCode::FORBIDDEN);
-        assert!(infinity.body.contains("propfind-finite-depth"));
+        assert_eq!(infinity.status, StatusCode::MULTI_STATUS);
+        assert!(
+            infinity.body.contains("/alice/a/</d:href>"),
+            "{}",
+            infinity.body
+        );
+        assert!(!infinity.body.contains("/alice/a/b/"), "{}", infinity.body);
 
         let dots = f
             .send(

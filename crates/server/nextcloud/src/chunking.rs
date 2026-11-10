@@ -1065,7 +1065,9 @@ impl ChunkedUploads {
     {
         let depth = match header_str(headers, "depth") {
             Some("0") => 0,
+            // `infinity` like Nextcloud (and the files namespace): as `1`.
             Some("1") | None => 1,
+            Some(depth) if depth.eq_ignore_ascii_case("infinity") => 1,
             _ => {
                 return Err(Box::new(xml(
                     StatusCode::FORBIDDEN,

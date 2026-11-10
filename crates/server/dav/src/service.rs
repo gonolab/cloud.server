@@ -8,7 +8,9 @@
 //!   `a/%2e%2e/b` would silently become `b`.)
 //! - A `Destination` outside the identity's WebDAV roots (for example another user's tree) is
 //!   refused with 403.
-//! - `PROPFIND` with `Depth: infinity` is refused with 403 and `<D:propfind-finite-depth/>`.
+//! - `PROPFIND` with `Depth: infinity` is answered like `Depth: 1`, as Nextcloud does (SabreDAV
+//!   without `enablePropfindDepthInfinity`). The Nextcloud iOS app lists folders that are made
+//!   available offline with `Depth: infinity`; on an error it logs it and downloads nothing.
 //! - `LOCK` on a read-only location is refused with 403 (a lock system can only say 423), as
 //!   are `MOVE` from and `COPY`/`MOVE` into read-only locations, so that clients get a plain
 //!   403 instead of a multistatus.
@@ -107,15 +109,6 @@ pub(crate) fn xml_body(status: StatusCode, body: String) -> Response<DavBody> {
         HeaderValue::from_static("application/xml; charset=utf-8"),
     );
     response
-}
-
-fn xml_error(status: StatusCode, condition: &str) -> Response<DavBody> {
-    xml_body(
-        status,
-        format!(
-            "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<D:error xmlns:D=\"DAV:\"><D:{condition}/></D:error>\n"
-        ),
-    )
 }
 
 /// Rewrites `X-OC-MTime` and `X-OC-CTime` values with a fraction (`1700000000.25`, as
@@ -243,7 +236,7 @@ impl DavService {
                 .and_then(|value| value.to_str().ok())
                 .is_some_and(|depth| depth.trim().eq_ignore_ascii_case("infinity"))
         {
-            return xml_error(StatusCode::FORBIDDEN, "propfind-finite-depth");
+            parts.headers.insert("depth", HeaderValue::from_static("1"));
         }
 
         // PROPFIND bodies are small and parsed by dav-server anyway; read them here to learn

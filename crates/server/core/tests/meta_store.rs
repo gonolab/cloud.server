@@ -444,6 +444,34 @@ async fn dead_props_follow_moves_and_copies_and_die_with_deletes() {
 }
 
 #[tokio::test]
+async fn dead_props_of_many_entries_are_loaded_together() {
+    let f = fixture().await;
+    let a = f.write("a.txt", 1).await;
+    let b = f.write("b.txt", 1).await;
+    let c = f.write("c.txt", 1).await;
+    for (id, name) in [(a, "x"), (a, "y"), (c, "z")] {
+        f.store
+            .patch_dead_props(id, &[PropChange::Set(dead(name, "1"))])
+            .await
+            .unwrap();
+    }
+    // More ids than one batch holds.
+    let mut ids: Vec<i64> = (100_000..100_900).collect();
+    ids.extend([a, b, c]);
+    let found = f.store.dead_props_many(&ids).await.unwrap();
+    let names = |id: i64| -> Vec<String> {
+        found
+            .get(&id)
+            .map(|props| props.iter().map(|prop| prop.name.clone()).collect())
+            .unwrap_or_default()
+    };
+    assert_eq!(names(a), ["x", "y"]);
+    assert!(!found.contains_key(&b), "entries without any are absent");
+    assert_eq!(names(c), ["z"]);
+    assert_eq!(found.len(), 2);
+}
+
+#[tokio::test]
 async fn creation_times_survive_writes_and_moves_and_are_copied() {
     let f = fixture().await;
     let id = f.write("a.txt", 1).await;

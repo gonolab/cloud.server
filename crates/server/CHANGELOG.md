@@ -25,6 +25,9 @@ compatible within a major version: released clients keep working with newer serv
 - The server reports Nextcloud 32.0.0 instead of 30.0.0 in `status.php` and the capabilities.
   Nextcloud Android 35 no longer says the server has reached end of life and no longer
   lowercases the extensions of uploaded files.
+- Large folders list much faster: dead properties are loaded once per entry and per listing in
+  batches instead of one query per requested property and entry (20,000 entries with the
+  Nextcloud iOS app's properties: 2 s instead of 15 s).
 
 ### Fixed
 

@@ -6,7 +6,7 @@ use std::{
 };
 
 use dav_server::davpath::DavPath;
-use gono_server_core::RelPath;
+use gono_server_core::{RelPath, meta::DeadProp};
 use http::Method;
 
 use crate::{identity::Identity, metadata::Entry};
@@ -160,6 +160,11 @@ struct CtxInner {
     cache: Mutex<HashMap<RelPath, Arc<Entry>>>,
     /// The entry the response is about (OC-ETag, OC-FileId, X-NC-Permissions headers).
     outcome: Mutex<Option<Arc<Entry>>>,
+    /// Dead properties of entries, by file id. dav-server asks for every requested property
+    /// of every entry separately, and clients request dozens of properties the server does not
+    /// know; the cache loads each entry's dead properties once (a whole listing at once, see
+    /// `ScopedFs::read_dir`) instead of querying for each property.
+    dead_props: Mutex<HashMap<i64, Arc<[DeadProp]>>>,
 }
 
 impl Ctx {
@@ -170,6 +175,7 @@ impl Ctx {
             request,
             cache: Mutex::new(HashMap::new()),
             outcome: Mutex::new(None),
+            dead_props: Mutex::new(HashMap::new()),
         }))
     }
 
@@ -199,6 +205,18 @@ impl Ctx {
     pub(crate) fn forget(&self, storage: &RelPath) {
         let mut cache = lock(&self.0.cache);
         cache.retain(|path, _| !path.starts_with(storage));
+    }
+
+    pub(crate) fn cached_dead_props(&self, file_id: i64) -> Option<Arc<[DeadProp]>> {
+        lock(&self.0.dead_props).get(&file_id).cloned()
+    }
+
+    pub(crate) fn remember_dead_props(&self, file_id: i64, props: Arc<[DeadProp]>) {
+        lock(&self.0.dead_props).insert(file_id, props);
+    }
+
+    pub(crate) fn forget_dead_props(&self, file_id: i64) {
+        lock(&self.0.dead_props).remove(&file_id);
     }
 
     /// Records the entry the response describes.

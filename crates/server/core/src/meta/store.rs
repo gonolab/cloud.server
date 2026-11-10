@@ -414,6 +414,33 @@ impl MetaStore {
             .collect())
     }
 
+    /// The dead properties of several entries, keyed by file id; entries without any are
+    /// absent. One query per [`BATCH`] ids, so that listing a folder does not cost a query per
+    /// entry.
+    pub async fn dead_props_many(&self, file_ids: &[i64]) -> Result<HashMap<i64, Vec<DeadProp>>> {
+        let mut found: HashMap<i64, Vec<DeadProp>> = HashMap::new();
+        for chunk in file_ids.chunks(BATCH) {
+            let placeholders = vec!["?"; chunk.len()].join(", ");
+            let sql = format!(
+                "SELECT file_id, namespace, name, xml FROM dead_props \
+                 WHERE file_id IN ({placeholders}) ORDER BY file_id, namespace, name"
+            );
+            let mut query =
+                sqlx::query_as::<_, (i64, String, String, Vec<u8>)>(sqlx::AssertSqlSafe(sql));
+            for id in chunk {
+                query = query.bind(id);
+            }
+            for (file_id, namespace, name, xml) in query.fetch_all(&self.pool).await? {
+                found.entry(file_id).or_default().push(DeadProp {
+                    namespace,
+                    name,
+                    xml,
+                });
+            }
+        }
+        Ok(found)
+    }
+
     /// One dead property of an entry.
     pub async fn dead_prop(
         &self,

@@ -981,7 +981,48 @@ impl ScopedFs {
         if let Some(storage) = entry.location.storage() {
             ctx.forget(storage);
         }
+        ctx.forget_dead_props(file_id);
         Ok(statuses)
+    }
+
+    /// The dead properties of `file_id`, from the request's cache or the database.
+    async fn dead_props(&self, ctx: &Ctx, file_id: i64) -> FsResult<Arc<[DeadProp]>> {
+        if let Some(props) = ctx.cached_dead_props(file_id) {
+            return Ok(props);
+        }
+        let props: Arc<[DeadProp]> = self
+            .inner
+            .meta
+            .dead_props(file_id)
+            .await
+            .map_err(db_error)?
+            .into();
+        ctx.remember_dead_props(file_id, props.clone());
+        Ok(props)
+    }
+
+    /// Loads the dead properties of all entries of a listing in a few queries, before
+    /// dav-server asks for the properties of each entry.
+    async fn preload_dead_props(
+        &self,
+        ctx: &Ctx,
+        entries: &[(String, Arc<Entry>)],
+    ) -> FsResult<()> {
+        let ids: Vec<i64> = entries
+            .iter()
+            .filter_map(|(_, entry)| entry.file_id)
+            .collect();
+        let mut found = self
+            .inner
+            .meta
+            .dead_props_many(&ids)
+            .await
+            .map_err(db_error)?;
+        for id in ids {
+            let props = found.remove(&id).unwrap_or_default();
+            ctx.remember_dead_props(id, props.into());
+        }
+        Ok(())
     }
 }
 
@@ -1191,6 +1232,9 @@ impl GuardedFileSystem<Ctx> for ScopedFs {
                 Location::Virtual { client } => self.list_virtual(ctx, client).await?,
                 Location::Storage { .. } => self.list_storage(ctx, &location).await?,
             };
+            if is_method(ctx, "PROPFIND") {
+                self.preload_dead_props(ctx, &entries).await?;
+            }
             let items: Vec<FsResult<Box<dyn DavDirEntry>>> = entries
                 .into_iter()
                 .map(|(name, entry)| {
@@ -1292,19 +1336,15 @@ impl GuardedFileSystem<Ctx> for ScopedFs {
             let Some(file_id) = entry.file_id else {
                 return Ok(Vec::new());
             };
-            let props = self
-                .inner
-                .meta
-                .dead_props(file_id)
-                .await
-                .map_err(db_error)?;
-            Ok(props
-                .into_iter()
+            Ok(self
+                .dead_props(ctx, file_id)
+                .await?
+                .iter()
                 .map(|prop| DavProp {
-                    name: prop.name,
+                    name: prop.name.clone(),
                     prefix: None,
-                    namespace: (!prop.namespace.is_empty()).then_some(prop.namespace),
-                    xml: Some(prop.xml),
+                    namespace: (!prop.namespace.is_empty()).then(|| prop.namespace.clone()),
+                    xml: Some(prop.xml.clone()),
                 })
                 .collect())
         }
@@ -1324,11 +1364,12 @@ impl GuardedFileSystem<Ctx> for ScopedFs {
                     .ok_or(FsError::NotFound);
             }
             let file_id = entry.file_id.ok_or(FsError::NotFound)?;
-            self.inner
-                .meta
-                .dead_prop(file_id, prop.namespace.as_deref().unwrap_or(""), &prop.name)
-                .await
-                .map_err(db_error)?
+            let namespace = prop.namespace.as_deref().unwrap_or("");
+            self.dead_props(ctx, file_id)
+                .await?
+                .iter()
+                .find(|dead| dead.namespace == namespace && dead.name == prop.name)
+                .map(|dead| dead.xml.clone())
                 .ok_or(FsError::NotFound)
         }
         .boxed()

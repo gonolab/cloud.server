@@ -23,6 +23,12 @@ compatible within a major version: released clients keep working with newer serv
   `https://gono.dev/cloud.server.sh` redirects to the one of the newest server release. Release
   1.0.0 carries both names.
 
+### Fixed
+
+- Nextcloud Android can list the folders of users whose name contains `@`: hrefs leave `@`,
+  `:`, `(` and `)` unencoded, as Nextcloud does, instead of writing `%40`, which the app could
+  not match against the user name.
+
 ## [1.0.0] - 2026-11-10
 
 First release of the rewrite on top of [dav-server-rs](https://github.com/messense/dav-server-rs).

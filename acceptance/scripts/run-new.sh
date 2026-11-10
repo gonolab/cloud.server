@@ -214,7 +214,8 @@ USER2_WEB_PASSWORD="$(random_password)"
 
 echo "==> initializing a fresh installation in ${WORK_DIR}"
 printf '%s\n' "${WEB_PASSWORD}" | gono init --admin gono --password-stdin >/dev/null
-printf '%s\n' "${USER2_WEB_PASSWORD}" | gono user add alice --password-stdin >/dev/null
+# An email-style name, so that the multi-user tests also cover `@` in URLs and hrefs.
+printf '%s\n' "${USER2_WEB_PASSWORD}" | gono user add alice@example.com --password-stdin >/dev/null
 
 echo "==> minting credentials"
 PASSWORD="$(mint_app_password gono --label acceptance-full)"
@@ -222,7 +223,7 @@ VIEW_PASSWORD="$(mint_app_password gono --label acceptance-view --scope /=/:view
 SCOPED_PASSWORD="$(mint_app_password gono --label acceptance-scoped \
   --scope /acc-view=/acc-scope/view:view \
   --scope /acc-full=/acc-scope/full:full)"
-USER2_PASSWORD="$(mint_app_password alice --label acceptance-full)"
+USER2_PASSWORD="$(mint_app_password alice@example.com --label acceptance-full)"
 
 echo "==> starting gono-cloud on ${SERVER_URL} (public URL ${BASE_URL})"
 # Started directly (not through the `gono` function) so that $! is the server itself.
@@ -241,7 +242,7 @@ export GONO_ACCEPT_VIEW_PASSWORD="${VIEW_PASSWORD}"
 export GONO_ACCEPT_SCOPED_PASSWORD="${SCOPED_PASSWORD}"
 export GONO_ACCEPT_WEB_PASSWORD="${WEB_PASSWORD}"
 export GONO_ACCEPT_ADMIN_PATH="/gono-admin"
-export GONO_ACCEPT_USER2="alice"
+export GONO_ACCEPT_USER2="alice@example.com"
 export GONO_ACCEPT_PASSWORD2="${USER2_PASSWORD}"
 
 ENV_FILE="${WORK_DIR}/accept.env"

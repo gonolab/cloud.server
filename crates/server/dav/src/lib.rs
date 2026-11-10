@@ -17,8 +17,8 @@
 //! - [`report`]: the `oc:filter-files` favorites REPORT, served next to dav-server.
 //! - [`oc_headers`]: the tower layer adding `OC-ETag`, `OC-FileId` and `X-NC-Permissions`.
 //! - [`xml_limits`]: the size and nesting limits for XML request bodies.
-//! - [`xml_prefix`]: the tower layer that writes the `DAV:` prefix as `d:` in XML responses, as
-//!   the Nextcloud iOS app requires.
+//! - [`xml_prefix`]: the tower layer that writes the `DAV:` prefix as `d:` and encodes hrefs like
+//!   SabreDAV in XML responses, as the Nextcloud apps require.
 //!
 //! All metadata writes go through the `MetaStore` (see [`gono_server_core::meta`]).
 

@@ -80,6 +80,68 @@ async fn multistatus_writes_the_dav_namespace_as_d() {
     }
 }
 
+/// SabreDAV leaves `@`, `:`, `(` and `)` unencoded in hrefs. Nextcloud Android cuts every href
+/// at `/remote.php/dav/files/<user>` with `@` written literally, and cannot list a single folder
+/// of a user like `alice@example.com` when the href says `%40`; NextcloudKit (iOS) recognizes the
+/// user's root only by its literal href.
+#[tokio::test]
+async fn hrefs_leave_at_signs_colons_and_parentheses_unencoded() {
+    let Some(ctx) = Ctx::bare() else { return };
+    let user2 = gono_acceptance::require!(ctx.user2(), "GONO_ACCEPT_USER2/PASSWORD2 not set");
+    if !user2.user.contains('@') {
+        gono_acceptance::skip("GONO_ACCEPT_USER2 contains no '@'");
+        return;
+    }
+    let dav = ctx.dav_as(&user2);
+    dav.create_dir(&ctx.dir).await;
+    ctx.cleanup_later(&user2, &ctx.dir);
+    dav.put(&ctx.path("photo@2x (1):a b.txt"), "x")
+        .await
+        .expect(&[201]);
+
+    let files = format!("{}/remote.php/dav/files/{}", dav.base_path(), user2.user);
+    let response = dav
+        .propfind(&ctx.dir, "1", gono_acceptance::dav::PROPFIND_STANDARD)
+        .await;
+    response.expect(&[207]);
+    let xml = response.text();
+    for href in [
+        format!("{files}/{}/", ctx.dir),
+        format!("{files}/{}/photo@2x%20(1):a%20b.txt", ctx.dir),
+    ] {
+        assert!(
+            xml.contains(&format!("<d:href>{href}</d:href>")),
+            "{href}\n{xml}"
+        );
+    }
+
+    // Android resumes chunked uploads by listing the upload session.
+    let upload = format!("acc-{}", random_id());
+    let destination = dav.url(&ctx.path("big.bin"));
+    mkcol_upload(&dav, &upload, &destination, 1)
+        .await
+        .expect(&[201]);
+    let response = dav
+        .propfind_url(
+            &dav.upload_url(&upload),
+            "0",
+            gono_acceptance::dav::PROPFIND_STANDARD,
+        )
+        .await;
+    dav.delete_upload(&upload).await;
+    response.expect(&[207]);
+    let href = format!(
+        "{}/remote.php/dav/uploads/{}/{upload}/",
+        dav.base_path(),
+        user2.user
+    );
+    let xml = response.text();
+    assert!(
+        xml.contains(&format!("<d:href>{href}</d:href>")),
+        "{href}\n{xml}"
+    );
+}
+
 #[tokio::test]
 async fn capabilities_are_public_on_all_aliases() {
     let Some(ctx) = Ctx::bare() else { return };

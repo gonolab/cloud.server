@@ -23,8 +23,10 @@
 //!
 //! Every response to a WebDAV request passes [`OcHeadersLayer`], which adds the `OC-ETag`,
 //! `OC-FileId` and `X-NC-Permissions` headers, and [`DavPrefixLayer`], which writes the `DAV:`
-//! prefix of XML bodies as `d:` (the Nextcloud iOS app finds no entries otherwise). Every
-//! request is logged once with secrets removed from its target ([`crate::request_log`]).
+//! prefix of XML bodies as `d:` (the Nextcloud iOS app finds no entries otherwise) and leaves
+//! `@`, `:`, `(` and `)` unencoded in hrefs (Nextcloud Android cannot list the folders of a user
+//! whose name contains `@` otherwise). Every request is logged once with secrets removed from its
+//! target ([`crate::request_log`]).
 
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 

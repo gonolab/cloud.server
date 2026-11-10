@@ -28,8 +28,8 @@ listed under "In scope" is deferred until after v1.
   - Favorites through `PROPPATCH` and the `filter-files` REPORT (used by the desktop client and
     the iOS app; the Android app lists favorites with `SEARCH`, see the open questions).
   - Direct download links (`POST .../apps/dav/api/v1/direct`, `/remote.php/direct/<token>`),
-    through which the mobile apps stream video and audio that is not downloaded yet. A link
-    acts with the app password that asked for it and ends with it.
+    through which the mobile apps stream media that is not downloaded yet (Android video and
+    audio, iOS video). A link acts with the app password that asked for it and ends with it.
 - **Multiple users** with per-app-password mount scopes (`view` or `full`).
 - **notify_push** for real-time change notifications.
 - **Web admin UI**: server overview, accounts (create, enable and disable, admin role, display
@@ -172,9 +172,12 @@ These are resolved by testing against real clients, not by decision:
   - The search box: both apps search the server through unified search (OCS
     `search/providers`), not `SEARCH`. It answers 404, so neither app finds files on the
     server; iOS shows an error banner after the matches in the open folder.
-  - Video and audio playback (fixed): both apps play media that is not downloaded yet only by
-    streaming it from a URL that `POST /ocs/v2.php/apps/dav/api/v1/direct` hands out, without
-    a fallback. That endpoint answered 404, so such files did not play; it is implemented now.
+  - Video and audio playback (fixed): Android plays video and audio that is not downloaded
+    yet, and iOS video, only by streaming it from a URL that
+    `POST /ocs/v2.php/apps/dav/api/v1/direct` hands out, without a fallback (iOS 35.2.2
+    downloads audio over WebDAV before playing it). That endpoint answered 404, so such files
+    did not play; it is implemented now and was tested with both apps on 2026-11-11
+    (`docs/mobile-checklist.md`).
 
   Supporting a subset of `SEARCH` (favorites, media types, recent files, file names) and
   unified search is a decision for the maintainers; for v1 these are known limitations. The apps show their Albums and trash bin entries regardless of the capabilities;

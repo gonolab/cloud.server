@@ -83,7 +83,7 @@ Add the account again (1.1–1.5) for the following sections.
 |---|---|---|
 | 4.1 | Open a text file, a photo and the large file. | They open with the right content. |
 | 4.2 | Make a file available offline, change it on another device, refresh. (Android 35 has no offline switch for files, only "Sync" for folders; there, download the file, change it and open it again.) | The app downloads the new version. |
-| 4.3 | Play the MP4 and the MP3 without downloading them first; seek in the video. | They play while streaming, and seeking works: the server log shows `POST .../apps/dav/api/v1/direct` (200) and `GET /remote.php/direct/<redacted>` (206 for ranges). |
+| 4.3 | Play the MP4 and the MP3 without downloading them first; seek in the video. | They play while streaming, and seeking works: the server log shows `POST .../apps/dav/api/v1/direct` (200) and `GET /remote.php/direct/<redacted>` (206 for ranges). iOS 35.2.2 streams only video: it downloads audio with a WebDAV `GET` (200) before playing it, and also when a media file next to it in the folder is opened. |
 | 4.4 | iOS: make a folder with files and a subfolder available offline, then go offline and open the files. | The files directly in the folder were downloaded (as on Nextcloud, the app's `Depth: infinity` listing returns one level). |
 
 ## 5. Favorites
@@ -160,3 +160,28 @@ Fixed during the test, each with tests:
 | Failed requests from the log | See `docs/v1-scope.md`, open questions: notifications, user_status, activity, shares, avatar, preview, Albums, `OPTIONS /remote.php/dav` | dashboard widgets, directEditing, notifications push, avatar, preview, trash bin |
 
 Neither app connected to notify_push (`/push/ws`); the desktop client uses it.
+
+### 2026-11-11, direct download links (`main` at d73ef5c)
+
+Server: `main` at `d73ef5c`, packaged with `package.sh` for x86_64 Linux and installed as an
+upgrade over the test server of 2026-11-10 (same host, nginx and certificate; data and accounts
+kept, migrations `0004` and `0005` applied). Only 4.3 was run, with a 19.5 MB MP4 and a 1.3 MB
+MP3 (1:26).
+
+Devices:
+
+- Android: Nextcloud Android 35.0.2 on the Android 15 emulator. The phone was not tested this
+  time.
+- iOS: Nextcloud iOS 35.2.2 built from the `35.2.2` tag for the iPhone 17 simulator (iOS 27.2).
+
+| Item | Android 35.0.2 | iOS 35.2.2 |
+|---|---|---|
+| 4.3 MP4 | Pass: `POST .../apps/dav/api/v1/direct` 200, then `GET /remote.php/direct/<redacted>` 200 and 206; plays before it is downloaded; seeking works | Pass: `POST .../direct` 200, then `GET /remote.php/direct/<redacted>` 206 for the first bytes, 2 MiB, a few small ranges and the rest of the file; plays and seeks (the player had buffered the whole file, so the seek sent no request) |
+| 4.3 MP3 | Pass: `POST .../direct` 200, `GET /remote.php/direct/<redacted>` 200; plays and seeks. No WebDAV `GET` of either file | Plays and seeks, but downloaded first: the app fetches audio with a WebDAV `GET` (200), both when it is opened and when the MP4 next to it is opened. In 35.2.2 only the video player asks for direct links (client behavior) |
+
+The link rules, checked with `curl` against the same server: a link made with
+`expirationTime=60` answers 404 after 62 s; a link follows its file through a `MOVE` and an
+overwrite and serves the new content; it answers 404 once the file is deleted, and once the app
+password that made it is revoked (its rows are gone). The server's log showed every direct link
+as `<redacted>`. nginx's own access log, however, records the full URL with the token, as it
+does for Login Flow tokens.

@@ -13,8 +13,8 @@
 //!    [`MAX_FRAME_BYTES`], so nobody can make the server buffer large messages.
 //! 2. **Authentication.** Username and app password go through the shared
 //!    [`Authenticator`](crate::auth::Authenticator) and its failed-attempt limiter; a pre-auth
-//!    token (empty username) is checked against the same limiter. Failures are answered with
-//!    `err: ...` and a close frame.
+//!    token (empty username) is verified the same way: first, with the limiter counting
+//!    failures only. Failures are answered with `err: ...` and a close frame.
 //! 3. **Subscription.** The hub refuses users at `notify_push.max_connections_per_user`.
 //! 4. **Streaming.** Changes are filtered and debounced by an [`Outbox`]. Every
 //!    `notify_push.ping_interval_secs` the server checks that the app password is still valid
@@ -210,15 +210,19 @@ async fn authenticate_socket(
     let username = read_text(socket).await?;
     let password = SecretString::from(read_text(socket).await?);
     if username.is_empty() {
+        // Like app passwords, pre-auth tokens are random: verified first, and the limiter
+        // only slows down failures (see `crate::auth`).
         let limiter = state.auth.limiter();
-        if limiter.check(client).is_some() {
-            return Err(AuthFailure::RateLimited);
-        }
+        let blocked = limiter.check(client).is_some();
         return hub
             .redeem_pre_auth(password.expose_secret())
             .ok_or_else(|| {
                 limiter.record_failure(client);
-                AuthFailure::Invalid
+                if blocked {
+                    AuthFailure::RateLimited
+                } else {
+                    AuthFailure::Invalid
+                }
             });
     }
     match state
@@ -649,11 +653,16 @@ mod tests {
             let (_, reply) = fixture.login("", "not-a-token").await;
             assert_eq!(reply.as_deref(), Some("err: Invalid credentials"));
         }
-        let (_, reply) = fixture.login("alice", &fixture.full).await;
-        assert_eq!(
-            reply.as_deref(),
-            Some("err: Too many failed attempts, try again later")
-        );
+        for (user, password) in [("", "not-a-token"), ("alice", "wrong")] {
+            let (_, reply) = fixture.login(user, password).await;
+            assert_eq!(
+                reply.as_deref(),
+                Some("err: Too many failed attempts, try again later")
+            );
+        }
+        // Valid credentials from the same address are still accepted.
+        let (_client, reply) = fixture.login("alice", &fixture.full).await;
+        assert_eq!(reply.as_deref(), Some("authenticated"));
     }
 
     #[tokio::test]

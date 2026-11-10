@@ -32,6 +32,10 @@ compatible within a major version: released clients keep working with newer serv
   the Nextcloud iOS app deleted the account from the device and Nextcloud Android discarded
   the stored password. The web login says the server is temporarily unavailable instead of
   "wrong username or password".
+- Valid app passwords keep working from an address that has used up its failed attempts; only
+  further wrong credentials get `429`. Before, one failing client (an old device, a WebDAV app
+  set up with the web login password) locked out every device behind the same address. The web
+  login has a limiter of its own.
 
 ## [1.0.0] - 2026-11-10
 

@@ -3,10 +3,11 @@
 //! - **Pages** are askama templates (`crates/server/bin/templates/`), rendered with [`render`].
 //!   Every value is HTML-escaped by the template engine; the one stylesheet
 //!   (`crates/server/bin/assets/web.css`) is embedded in every page.
-//! - **Sign-in** ([`Web::sign_in`]) with the web login password (Argon2), behind the same
-//!   per-client [`RateLimiter`] as device authentication: checked before anything is
-//!   verified, one token per failure. Unknown accounts cost the same Argon2 work as known
-//!   ones, so response times do not reveal which accounts exist.
+//! - **Sign-in** ([`Web::sign_in`]) with the web login password (Argon2), behind a per-client
+//!   [`RateLimiter`] of its own: checked before anything is verified, one token per failure.
+//!   It is not shared with device authentication, so failing devices behind the same address
+//!   do not keep a user from signing a new device in. Unknown accounts cost the same Argon2
+//!   work as known ones, so response times do not reveal which accounts exist.
 //! - **Sessions**: a successful sign-in creates a `web_sessions` row
 //!   ([`gono_server_core::web_sessions`]) and sets the [`SESSION_COOKIE`] (`HttpOnly`,
 //!   `SameSite=Lax`, `Secure` when the public origin is HTTPS). App passwords never create a

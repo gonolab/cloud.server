@@ -1,10 +1,17 @@
-//! Brute-force protection shared by every authentication entry point.
+//! Failed-attempt limiter of the authentication entry points.
 //!
 //! Each client address has a token bucket of [`BURST`] failed attempts that refills by one
-//! token every [`REFILL_INTERVAL`]. Callers check [`RateLimiter::check`] **before** verifying
-//! credentials and answer `429 Too Many Requests` without verifying anything while the bucket
-//! is empty; every failed verification takes one token with [`RateLimiter::record_failure`].
-//! Requests without credentials and successful sign-ins cost nothing.
+//! token every [`REFILL_INTERVAL`]; every failed verification takes one token with
+//! [`RateLimiter::record_failure`], and [`RateLimiter::check`] says whether the bucket is
+//! empty. Requests without credentials and successful sign-ins cost nothing. There are two
+//! limiters with different policies:
+//!
+//! - The web login (Argon2 passwords people choose) checks its limiter **before** verifying
+//!   and answers `429 Too Many Requests` without verifying anything while the bucket is empty
+//!   ([`crate::web`]).
+//! - Device authentication (random app passwords and pre-auth tokens) verifies first and
+//!   answers only *failures* with `429` while the bucket is empty, so that one failing client
+//!   behind a shared address cannot lock out the others ([`crate::auth`]).
 //!
 //! IPv6 clients are tracked per `/64` network, the smallest block a single host usually
 //! controls. The table is bounded: once it holds [`MAX_TRACKED`] clients, buckets that have
@@ -26,7 +33,7 @@ pub const REFILL_INTERVAL: Duration = Duration::from_secs(10);
 /// Number of clients tracked before full buckets are pruned.
 const MAX_TRACKED: usize = 4096;
 
-/// Shared failed-attempt limiter, keyed by client address.
+/// Failed-attempt limiter, keyed by client address.
 #[derive(Debug, Default)]
 pub struct RateLimiter {
     buckets: Mutex<HashMap<IpAddr, Bucket>>,

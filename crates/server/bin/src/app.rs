@@ -426,14 +426,16 @@ mod tests {
             dav.fs().clone(),
             gono_server_core::locks::LockStore::new(pool.clone()),
         );
-        let limiter = Arc::new(RateLimiter::new());
         let base_url = Url::parse("http://localhost:8080").unwrap();
         let state = AppState {
             db: pool.clone(),
-            auth: Arc::new(Authenticator::new(pool.clone(), limiter.clone())),
+            auth: Arc::new(Authenticator::new(
+                pool.clone(),
+                Arc::new(RateLimiter::new()),
+            )),
             dav,
             uploads,
-            web: Arc::new(Web::new(pool, limiter, &base_url)),
+            web: Arc::new(Web::new(pool, Arc::new(RateLimiter::new()), &base_url)),
             base_url: Arc::new(base_url),
             flow_starts: Arc::new(RateLimiter::new()),
             trusted_proxies: Arc::new(Vec::new()),
@@ -701,14 +703,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn repeated_failures_are_rate_limited() {
+    async fn repeated_failures_are_rate_limited_but_valid_devices_are_not() {
         let f = fixture().await;
         for _ in 0..crate::ratelimit::BURST {
-            f.send("GET", FILES, Some("wrong"), &[], "").await;
+            let reply = f.send("GET", FILES, Some("wrong"), &[], "").await;
+            assert_eq!(reply.status, StatusCode::UNAUTHORIZED);
         }
-        let limited = f.send("GET", FILES, Some(&f.full), &[], "").await;
+        let limited = f.send("GET", FILES, Some("wrong"), &[], "").await;
         assert_eq!(limited.status, StatusCode::TOO_MANY_REQUESTS);
         assert!(limited.header("retry-after").parse::<u64>().unwrap() >= 1);
+        // Another device behind the same address keeps working.
+        let valid = f
+            .send("PROPFIND", FILES, Some(&f.full), &[("Depth", "0")], "")
+            .await;
+        assert_eq!(valid.status, StatusCode::MULTI_STATUS);
     }
 
     /// An XML body whose elements nest `depth` levels: a DAV root with `depth - 1` unclosed
@@ -1431,7 +1439,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn failed_web_sign_ins_share_the_device_rate_limit() {
+    async fn failed_web_sign_ins_are_rate_limited_apart_from_devices() {
         let f = fixture().await;
         let start = f.send("POST", "/login/v2", None, &[], "").await;
         let start: serde_json::Value = serde_json::from_str(&start.body).unwrap();
@@ -1463,12 +1471,9 @@ mod tests {
             .await;
         assert_eq!(limited.status, StatusCode::TOO_MANY_REQUESTS);
         assert!(limited.header("retry-after").parse::<u64>().unwrap() >= 1);
-        let dav = f.send("PROPFIND", FILES, Some(&f.full), &[], "").await;
-        assert_eq!(
-            dav.status,
-            StatusCode::TOO_MANY_REQUESTS,
-            "one limiter for both"
-        );
+        // Devices have a limiter of their own.
+        let dav = f.send("PROPFIND", FILES, Some("wrong"), &[], "").await;
+        assert_eq!(dav.status, StatusCode::UNAUTHORIZED, "separate limiters");
     }
 
     const UPLOADS: &str = "/remote.php/dav/uploads/alice";

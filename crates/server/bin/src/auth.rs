@@ -1,10 +1,7 @@
 //! Authentication of device requests (HTTP Basic with an app password).
 //!
 //! 1. Requests without credentials get a Basic challenge and cost nothing.
-//! 2. The shared [`RateLimiter`] is consulted **before** any verification: a client that has
-//!    used up its failed attempts gets `429 Too Many Requests` and its credentials are not
-//!    looked at.
-//! 3. The password is hashed with SHA-256 and the single matching `app_passwords` row is
+//! 2. The password is hashed with SHA-256 and the single matching `app_passwords` row is
 //!    loaded; it must belong to the given username, the account must be enabled, and the app
 //!    password must not have expired. Web login passwords are never accepted here.
 //!
@@ -13,6 +10,15 @@
 //!    `cloud/user` the Nextcloud iOS app deletes the account from the device, and Nextcloud
 //!    Android discards the stored password, so a short database problem must not look like
 //!    revoked credentials.
+//! 3. Failures go to the [`RateLimiter`] **after** verification. App passwords are random
+//!    tokens that cannot be guessed, so the limiter is not there to stop guessing; it slows
+//!    down clients that keep failing: once a client address has used up its failed attempts,
+//!    further wrong credentials get `429 Too Many Requests` instead of `401`. Valid
+//!    credentials are always accepted. Behind one NAT address (a household, an office), a
+//!    single misconfigured client, such as an old device with a revoked app password or a
+//!    WebDAV app set up with the web login password, must not lock out every other device.
+//!    The web login, whose passwords can be guessed, has a limiter of its own that it consults
+//!    before verifying ([`crate::web`]).
 //! 4. `last_used_at` is written at most once every [`LAST_USED_GRANULARITY`] per app password,
 //!    in the background, so ordinary requests do not write to the database.
 //!
@@ -70,8 +76,8 @@ impl Authenticator {
         }
     }
 
-    /// The failed-attempt limiter, shared with every other sign-in entry point (the web
-    /// login of Login Flow v2 and the admin UI).
+    /// The failed-attempt limiter of device authentication, also used for notify_push pre-auth
+    /// tokens.
     pub fn limiter(&self) -> &Arc<RateLimiter> {
         &self.limiter
     }
@@ -93,9 +99,9 @@ impl Authenticator {
         username: &str,
         password: &SecretString,
     ) -> AuthOutcome {
-        if let Some(wait) = self.limiter.check(client) {
-            return AuthOutcome::RateLimited(wait);
-        }
+        // Verified first: the limiter never refuses valid credentials (see the module
+        // documentation).
+        let blocked = self.limiter.check(client);
         let now = db::unix_now();
         match app_passwords::authenticate(&self.pool, username, password, now).await {
             Ok(Some(device)) => {
@@ -104,8 +110,14 @@ impl Authenticator {
             }
             Ok(None) => {
                 self.limiter.record_failure(client);
-                tracing::info!(%client, user = %username, "rejected device credentials");
-                AuthOutcome::Invalid
+                match blocked {
+                    // Logged once per request by the request log already.
+                    Some(wait) => AuthOutcome::RateLimited(wait),
+                    None => {
+                        tracing::info!(%client, user = %username, "rejected device credentials");
+                        AuthOutcome::Invalid
+                    }
+                }
             }
             Err(err) => {
                 // Neither let the request through nor call the credentials wrong (see the
@@ -255,15 +267,20 @@ mod tests {
                 AuthOutcome::Invalid
             ));
         }
-        // Blocked before verification: even the right password is not checked.
-        match auth.authenticate(client, &basic("alice", &token)).await {
+        // Further failures are refused with 429, but the right app password still works
+        // from the same address.
+        match auth.authenticate(client, &basic("alice", "wrong")).await {
             AuthOutcome::RateLimited(wait) => assert!(wait <= crate::ratelimit::REFILL_INTERVAL),
             other => panic!("expected 429, got {other:?}"),
         }
+        assert!(matches!(
+            auth.authenticate(client, &basic("alice", &token)).await,
+            AuthOutcome::Authenticated(_)
+        ));
         let other: IpAddr = "192.0.2.11".parse().unwrap();
         assert!(matches!(
-            auth.authenticate(other, &basic("alice", &token)).await,
-            AuthOutcome::Authenticated(_)
+            auth.authenticate(other, &basic("alice", "wrong")).await,
+            AuthOutcome::Invalid
         ));
     }
 

@@ -141,10 +141,11 @@ async fn serve(config: Config, config_path: std::path::PathBuf) -> anyhow::Resul
         pool.clone(),
         Arc::new(RateLimiter::new()),
     ));
-    // The HTML sign-in shares the failed-attempt limiter of device authentication.
+    // The HTML sign-in has a limiter of its own: failing devices must not block it, and its
+    // policy differs (see `crate::ratelimit`).
     let web = Arc::new(Web::new(
         pool.clone(),
-        auth.limiter().clone(),
+        Arc::new(RateLimiter::new()),
         &config.server.base_url,
     ));
     let admin = if config.admin.enabled {

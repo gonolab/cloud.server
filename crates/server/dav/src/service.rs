@@ -118,7 +118,6 @@ fn xml_error(status: StatusCode, condition: &str) -> Response<DavBody> {
     )
 }
 
-/// Whether every segment of a percent-encoded path is acceptable (see the module docs).
 /// Rewrites `X-OC-MTime` and `X-OC-CTime` values with a fraction (`1700000000.25`, as
 /// NextcloudKit sends them) to whole seconds. dav-server only parses whole seconds and answers
 /// 400 otherwise, while Nextcloud truncates. Values that are not numbers stay as they are, so
@@ -139,6 +138,7 @@ fn truncate_oc_times(headers: &mut HeaderMap) {
     }
 }
 
+/// Whether every segment of a percent-encoded path is acceptable (see the module docs).
 pub fn path_is_clean(raw: &str) -> bool {
     raw.split('/').all(|segment| {
         let decoded: Vec<u8> = percent_decode(segment.as_bytes());

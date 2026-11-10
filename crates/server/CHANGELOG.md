@@ -22,6 +22,9 @@ compatible within a major version: released clients keep working with newer serv
 - The install script is attached to releases as `cloud.server.sh` instead of `install.sh`, and
   `https://gono.dev/cloud.server.sh` redirects to the one of the newest server release. Release
   1.0.0 carries both names.
+- The server reports Nextcloud 32.0.0 instead of 30.0.0 in `status.php` and the capabilities.
+  Nextcloud Android 35 no longer says the server has reached end of life and no longer
+  lowercases the extensions of uploaded files.
 
 ### Fixed
 

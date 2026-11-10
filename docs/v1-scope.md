@@ -109,8 +109,9 @@ These are resolved by testing against real clients, not by decision:
 
   Findings so far (2026-11-09): `status.php` reports `productname` `Gono Cloud` and `version`
   `30.0.0.0` (`versionstring` `30.0.0`), the Nextcloud release whose client protocol is
-  implemented. The clients select features by `version` (the desktop client uses Login Flow v2
-  from 16.0 on and warns about versions it no longer supports), not by `productname`.
+  implemented (32.0.0 since 2026-11-11, see below). The clients select features by `version`
+  (the desktop client uses Login Flow v2 from 16.0 on and warns about versions it no longer
+  supports), not by `productname`.
   `nextcloudcmd` 4.0.6 (Ubuntu 26.04) reads `status.php`, the capabilities and
   `/ocs/v1.php/cloud/user` and completes every sync scenario of
   `acceptance/scripts/nextcloudcmd-scenarios.sh` with these values; no desktop behavior
@@ -124,6 +125,14 @@ These are resolved by testing against real clients, not by decision:
   challenge there; iOS polls Login Flow v2 with the token in the query, finds multistatus
   entries only under the prefix `d:` (`d:multistatus`, `d:response`, ...) and sends
   `X-OC-MTime` with fractions of a second.
+
+  The reported version (2026-11-11): with 30, Android 35.0.2 shows "The server has reached end
+  of life, please upgrade!" on every start and lowercases the extension of every uploaded file
+  (it enforces Windows-compatible file names for 30 and 31). The server reports `32.0.0`
+  instead, below the iOS gates at 32.0.2 (File Provider paging), 33 (auto upload without
+  `MKCOL`) and 35 (PhotoKit uploads). The desktop client's only gate at 32 concerns bulk
+  upload, which is not offered. The gates are listed at `NEXTCLOUD_VERSION`
+  (`crates/server/nextcloud/src/status.rs`), and tests keep the version between them.
 - The exact set of OCS endpoints the mobile apps call, and which of them can return empty
   results. Implemented: `cloud/capabilities`, `cloud/user`, `cloud/users/<own id>`,
   `core/apppassword` (`DELETE`) and an empty `core/navigation/apps`; everything else answers

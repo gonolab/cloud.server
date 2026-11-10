@@ -169,6 +169,33 @@ async fn capabilities_are_public_on_all_aliases() {
     }
 }
 
+/// The apps switch features by the reported Nextcloud version. Nextcloud Android 35 shows an
+/// end-of-life banner for 30 and older and lowercases file extensions for 30 and 31; Nextcloud
+/// iOS 35 pages its File Provider listings from 32.0.2 and stops creating auto-upload folders
+/// with `MKCOL` from 33 on. The server must stay between these gates, the same in
+/// `status.php` and in the capabilities.
+#[tokio::test]
+async fn reported_version_stays_between_the_app_feature_gates() {
+    let Some(ctx) = Ctx::bare() else { return };
+    let status = gono_acceptance::dav::send(&ctx.http, ctx.http.get(ctx.url("/status.php"))).await;
+    status.expect(&[200]);
+    let status = status.json();
+    let capabilities = ctx
+        .ocs("GET", "/ocs/v2.php/cloud/capabilities", None)
+        .await
+        .json();
+    let version = &capabilities["ocs"]["data"]["version"];
+    let triple = [&version["major"], &version["minor"], &version["micro"]]
+        .map(|part| part.as_u64().unwrap_or_else(|| panic!("{capabilities}")));
+    assert!(
+        ([32, 0, 0]..[32, 0, 2]).contains(&triple),
+        "{triple:?}: {capabilities}"
+    );
+    let string = format!("{}.{}.{}", triple[0], triple[1], triple[2]);
+    assert_eq!(version["string"], string.as_str(), "{capabilities}");
+    assert_eq!(status["versionstring"], string.as_str(), "{status}");
+}
+
 const OCS_USER_PATHS: [&str; 4] = [
     "/ocs/v1.php/cloud/user",
     "/ocs/v2.php/cloud/user",

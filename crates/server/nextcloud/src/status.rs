@@ -22,7 +22,26 @@ use serde_json::{Value, json};
 /// Reported in `status.php` and in the capabilities. Clients compare it with their own minimum
 /// versions, so it must stay a release they support; features beyond the v1 scope are
 /// switched off through the capabilities instead.
-pub const NEXTCLOUD_VERSION: (u32, u32, u32) = (30, 0, 0);
+///
+/// The apps also switch features on and off by this version, so it is chosen between their
+/// gates (Nextcloud Android 35.0.2, Nextcloud iOS 35.2.2, desktop client 4.0):
+///
+/// - Android shows "The server has reached end of life, please upgrade!" on every start for
+///   the major version in its `OUTDATED_SERVER_VERSION` (30) and older, unless
+///   `extendedSupport` is set.
+/// - Android enforces Windows-compatible file names for 30 and 31 regardless of the
+///   capabilities, which lowercases the extension of every uploaded file (`IMG_1.JPG` becomes
+///   `IMG_1.jpg`); from 32 on only when `files.windows_compatible_filenames` is set, which
+///   Gono Cloud does not.
+/// - The desktop client sends a legacy checksum header with bulk uploads below 32; bulk upload
+///   is not offered, so this does not matter.
+/// - iOS pages PROPFIND listings in its File Provider (`X-NC-Paginate`) from 32.0.2 on, relies
+///   on `X-NC-WebDAV-Auto-Mkcol` instead of `MKCOL` in auto upload from 33 on, and uses
+///   PhotoKit background uploads from 35 on. None of these is implemented.
+///
+/// Hence 32.0.0. A test keeps it in that window; recheck these gates before changing it and
+/// for every new app release.
+pub const NEXTCLOUD_VERSION: (u32, u32, u32) = (32, 0, 0);
 
 /// [`NEXTCLOUD_VERSION`] as `major.minor.micro`.
 pub fn version_string() -> String {
@@ -64,5 +83,16 @@ mod tests {
                 .unwrap()
                 .starts_with(&version_string())
         );
+    }
+
+    #[test]
+    fn the_version_stays_between_the_client_feature_gates() {
+        // See `NEXTCLOUD_VERSION` for what each bound switches on or off.
+        assert!(
+            NEXTCLOUD_VERSION >= (32, 0, 0),
+            "Android end-of-life banner"
+        );
+        assert!(NEXTCLOUD_VERSION < (32, 0, 2), "iOS File Provider paging");
+        assert_eq!(document("x")["extendedSupport"], false);
     }
 }

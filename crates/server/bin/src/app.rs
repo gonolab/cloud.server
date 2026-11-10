@@ -41,13 +41,15 @@ use axum::{
 };
 use gono_server_core::db;
 use gono_server_dav::{
-    DavPrefixLayer, DavService, Identity, OcHeadersLayer, report, resolve::FILES_ROOT, xml_limits,
+    DavPrefixLayer, DavService, Identity, OcHeadersLayer, RewrittenXml, report,
+    resolve::FILES_ROOT, xml_limits,
 };
 use gono_server_nextcloud::{
     chunking::{ChunkedUploads, UPLOADS_ROOT},
     notify_push::{Hub, PRE_AUTH_PATH, WEBSOCKET_PATH},
 };
 use ipnet::IpNet;
+use tower_http::compression::{CompressionLayer, Predicate};
 use url::Url;
 
 use crate::{
@@ -86,6 +88,23 @@ pub struct AppState {
     pub admin: Option<Arc<Admin>>,
 }
 
+/// Compresses the XML bodies of WebDAV responses (PROPFIND, REPORT, error documents) when the
+/// client accepts gzip, as Nextcloud does for PROPFIND: a listing of 20,000 photos is about
+/// 70 MB of XML and under 1 MB compressed. File contents are never compressed, so `GET` keeps
+/// its `Content-Length`, ETags and ranges. Clients that send no `Accept-Encoding` (Nextcloud
+/// Android's WebDAV client) get plain XML.
+#[derive(Debug, Clone, Copy)]
+struct DavXmlOnly;
+
+impl Predicate for DavXmlOnly {
+    fn should_compress<B>(&self, response: &axum::http::Response<B>) -> bool
+    where
+        B: axum::body::HttpBody,
+    {
+        response.extensions().get::<RewrittenXml>().is_some()
+    }
+}
+
 /// Builds the application router.
 pub fn router(state: AppState) -> Router {
     let dav = Router::new()
@@ -98,7 +117,8 @@ pub fn router(state: AppState) -> Router {
         .route("/remote.php/dav/", any(dav_namespace))
         .route("/remote.php/dav/{*rest}", any(dav_namespace))
         .layer(OcHeadersLayer)
-        .layer(DavPrefixLayer);
+        .layer(DavPrefixLayer)
+        .layer(CompressionLayer::new().gzip(true).compress_when(DavXmlOnly));
     let nextcloud = Router::new()
         .route("/status.php", get(nextcloud::status_php))
         .route("/index.php/204", get(nextcloud::connectivity))
@@ -533,6 +553,55 @@ mod tests {
             .send("PROPFIND", "/remote.php/webdav/", Some(&f.full), &[], "")
             .await;
         assert_eq!(alias.status, StatusCode::MULTI_STATUS);
+    }
+
+    #[tokio::test]
+    async fn dav_xml_is_compressed_on_request_but_file_contents_never() {
+        let f = fixture().await;
+        let xml_file = r#"<?xml version="1.0"?><x>a file that happens to be XML</x>"#;
+        let put = f
+            .send(
+                "PUT",
+                &format!("{FILES}/doc.xml"),
+                Some(&f.full),
+                &[("Content-Type", "application/xml")],
+                xml_file,
+            )
+            .await;
+        assert_eq!(put.status, StatusCode::CREATED);
+        let gzip = ("Accept-Encoding", "gzip");
+
+        let listing = f
+            .send(
+                "PROPFIND",
+                FILES,
+                Some(&f.full),
+                &[("Depth", "1"), gzip],
+                "",
+            )
+            .await;
+        assert_eq!(listing.status, StatusCode::MULTI_STATUS);
+        assert_eq!(listing.header("content-encoding"), "gzip");
+        let plain = f
+            .send("PROPFIND", FILES, Some(&f.full), &[("Depth", "1")], "")
+            .await;
+        assert!(!plain.headers.contains_key("content-encoding"));
+        assert!(plain.body.contains("/doc.xml</d:href>"), "{}", plain.body);
+
+        for headers in [vec![gzip], vec![gzip, ("Range", "bytes=0-4")]] {
+            let get = f
+                .send(
+                    "GET",
+                    &format!("{FILES}/doc.xml"),
+                    Some(&f.full),
+                    &headers,
+                    "",
+                )
+                .await;
+            assert!(get.status.is_success(), "{}", get.status);
+            assert!(!get.headers.contains_key("content-encoding"), "{headers:?}");
+            assert!(xml_file.starts_with(&get.body), "{headers:?}: {}", get.body);
+        }
     }
 
     #[tokio::test]

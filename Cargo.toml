@@ -71,6 +71,7 @@ thiserror = "2.0.17"
 tokio = "1.54.0"
 tokio-tungstenite = "0.29.0"
 toml = "1.2.0"
+tower-http = { version = "0.7.1", default-features = false, features = ["compression-gzip"] }
 tower-layer = "0.3.3"
 tower-service = "0.3.3"
 unicode-normalization = "0.1.26"

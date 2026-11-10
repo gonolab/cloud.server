@@ -147,6 +147,45 @@ async fn propfind_depth_1_lists_direct_children() {
     assert!(sub.is_collection());
 }
 
+/// Listings of large folders are big XML documents; Nextcloud gzips them for clients that ask,
+/// and so does the server. File contents are never compressed.
+#[tokio::test]
+async fn propfind_is_gzipped_on_request_but_downloads_are_not() {
+    let Some(ctx) = Ctx::new().await else { return };
+    let dav = ctx.dav();
+    let content = "<?xml version=\"1.0\"?><x>not a listing</x>";
+    dav.write(&ctx.path("file.xml"), content).await;
+
+    let listing = dav
+        .send(
+            dav.request("PROPFIND", &dav.url(&ctx.dir))
+                .header("Depth", "1")
+                .header("Accept-Encoding", "gzip")
+                .body(PROPFIND_STANDARD),
+        )
+        .await;
+    listing.expect(&[207]);
+    assert_eq!(
+        listing.header("content-encoding").as_deref(),
+        Some("gzip"),
+        "{}",
+        listing.describe()
+    );
+    assert!(listing.body.starts_with(&[0x1f, 0x8b]), "gzip magic");
+    let plain = dav.propfind(&ctx.dir, "1", PROPFIND_STANDARD).await;
+    assert_eq!(plain.header("content-encoding"), None);
+
+    let download = dav
+        .send(
+            dav.request("GET", &dav.url(&ctx.path("file.xml")))
+                .header("Accept-Encoding", "gzip"),
+        )
+        .await;
+    download.expect(&[200]);
+    assert_eq!(download.header("content-encoding"), None);
+    assert_eq!(download.body, content.as_bytes());
+}
+
 /// Nextcloud (SabreDAV without `enablePropfindDepthInfinity`) answers `Depth: infinity` like
 /// `Depth: 1`. The Nextcloud iOS app lists folders made available offline that way and
 /// downloads nothing when it gets an error.

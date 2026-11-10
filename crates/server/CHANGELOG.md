@@ -28,6 +28,9 @@ compatible within a major version: released clients keep working with newer serv
 - Large folders list much faster: dead properties are loaded once per entry and per listing in
   batches instead of one query per requested property and entry (20,000 entries with the
   Nextcloud iOS app's properties: 2 s instead of 15 s).
+- The XML of WebDAV responses is gzipped for clients that send `Accept-Encoding: gzip`, as
+  Nextcloud does for `PROPFIND` (a listing of 20,000 photos: 0.9 MB instead of 69 MB). File
+  downloads are never compressed.
 
 ### Fixed
 

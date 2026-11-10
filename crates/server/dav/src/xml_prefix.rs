@@ -45,6 +45,11 @@ use pin_project_lite::pin_project;
 use tower_layer::Layer;
 use tower_service::Service;
 
+/// Response extension set on every response whose XML body the layer rewrites: WebDAV XML,
+/// never file contents. Outer layers use it to compress exactly these bodies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RewrittenXml;
+
 /// Renames the `D` prefix to `d` and re-encodes hrefs in XML response bodies; see the
 /// [module documentation](self).
 #[derive(Debug, Clone, Copy, Default)]
@@ -86,6 +91,7 @@ where
             if rewrite {
                 // Decoding hrefs can shorten the body.
                 response.headers_mut().remove(header::CONTENT_LENGTH);
+                response.extensions_mut().insert(RewrittenXml);
             }
             Ok(response.map(|inner| PrefixBody {
                 inner,
@@ -666,6 +672,7 @@ mod tests {
             .await
             .unwrap();
         assert!(!response.headers().contains_key(header::CONTENT_LENGTH));
+        assert!(response.extensions().get::<RewrittenXml>().is_some());
         let body = response.into_body();
         assert_eq!(body.size_hint().exact(), None);
         assert_eq!(body.size_hint().upper(), Some(XML.len() as u64));
@@ -680,6 +687,7 @@ mod tests {
             .await
             .unwrap();
         assert!(response.headers().contains_key(header::CONTENT_LENGTH));
+        assert!(response.extensions().get::<RewrittenXml>().is_none());
         assert_eq!(
             response.into_body().size_hint().exact(),
             Some(XML.len() as u64)

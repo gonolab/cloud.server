@@ -14,6 +14,7 @@ the server as a service, upgrades and backups are in [deployment.md](deployment.
 | Pass every HTTP method and header | WebDAV uses `PROPFIND`, `PROPPATCH`, `MKCOL`, `COPY`, `MOVE`, `LOCK`, `UNLOCK`, `REPORT`, and headers such as `Depth`, `Destination`, `Overwrite`, `If`, `OC-Total-Length`. |
 | Upgrade WebSockets on `/push/ws` | notify_push (real-time change notifications) runs over a WebSocket. |
 | Stream request and response bodies | Uploads and downloads can be gigabytes; buffering them in the proxy costs disk space and time and breaks progress reporting. |
+| Pass `Accept-Encoding` and compressed responses through | Gono Cloud gzips the XML of WebDAV responses itself when a client asks for it (folder listings shrink by a factor of 50 or more). File downloads are never compressed, so the proxy needs no compression settings of its own. |
 | Allow large request bodies | Nextcloud clients upload big files in chunks, but generic WebDAV clients (Finder, rclone, Cyberduck, the mobile apps for some uploads) send a whole file in one `PUT`. |
 | Keep long requests and idle WebSockets open | A WebSocket is quiet between pings (`notify_push.ping_interval_secs`, 30 s by default); large transfers can take hours. |
 | Send the client address in `X-Forwarded-For` (or `Forwarded`) | Failed-login rate limiting and the logs work per client address. |

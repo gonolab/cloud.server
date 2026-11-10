@@ -41,4 +41,4 @@ pub use fs::ScopedFs;
 pub use identity::{Identity, Mount};
 pub use oc_headers::OcHeadersLayer;
 pub use service::{DavBody, DavService, OcInfo};
-pub use xml_prefix::DavPrefixLayer;
+pub use xml_prefix::{DavPrefixLayer, RewrittenXml};

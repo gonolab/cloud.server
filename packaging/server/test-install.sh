@@ -1,9 +1,9 @@
 #!/bin/sh
-# End-to-end test of install.sh on a throwaway machine: refused installs, a fresh install, the
+# End-to-end test of cloud.server.sh on a throwaway machine: refused installs, a fresh install, the
 # running service, WebDAV through the (sandboxed) service, the root guard of the CLI, a
 # graceful stop, an upgrade and the uninstall.
 #
-# Usage: packaging/server/test-install.sh <install.sh> <archive> [<SHA256SUMS>]
+# Usage: packaging/server/test-install.sh <cloud.server.sh> <archive> [<SHA256SUMS>]
 #
 # Without a SHA256SUMS file, one is written for a copy of the archive. The test installs a
 # system service and creates a system user, so it only runs where CI=true (GitHub Actions sets
@@ -16,7 +16,7 @@ set -eu
 	exit 1
 }
 [ $# -ge 2 ] || {
-	echo "usage: $0 <install.sh> <archive> [<SHA256SUMS>]" >&2
+	echo "usage: $0 <cloud.server.sh> <archive> [<SHA256SUMS>]" >&2
 	exit 2
 }
 installer=$1

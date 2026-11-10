@@ -1,6 +1,6 @@
 # systemd unit of the Gono Cloud server.
 #
-# Installed by packaging/server/install.sh as /etc/systemd/system/gono-cloud.service. The
+# Installed by packaging/server/cloud.server.sh as /etc/systemd/system/gono-cloud.service. The
 # installer replaces this file on upgrades: put local changes into a drop-in instead
 # (`systemctl edit gono-cloud`), for example a ReadWritePaths= line for a data directory outside
 # /var/lib/gono-cloud. See docs/deployment.md.

@@ -80,16 +80,20 @@ jobs:
           ## Install
 
           On Linux with systemd (any distribution: the Linux binaries are static and need no glibc)
-          or macOS 11 or newer, download \`install.sh\` from this release and run it as root. It
-          downloads the archive for the machine, checks it against \`SHA256SUMS\` and sets the
-          server up as a service:
+          or macOS 11 or newer, download the install script and run it as root. It downloads the
+          archive for the machine, checks it against \`SHA256SUMS\` and sets the server up as a
+          service:
 
           \`\`\`sh
-          sudo sh install.sh --base-url https://cloud.example.com
+          curl -fsSLo cloud.server.sh https://gono.dev/cloud.server.sh
+          sudo sh cloud.server.sh --base-url https://cloud.example.com
           \`\`\`
 
-          Run the same script again to upgrade. See \`docs/deployment.md\` for manual installation,
-          the reverse proxy, backups and uninstalling.
+          \`https://gono.dev/cloud.server.sh\` serves the script of the newest server release. To
+          install exactly this release, add \`--version ${VERSION}\` or use the \`cloud.server.sh\`
+          attached here. Download the script again and run it without \`--base-url\` to upgrade.
+          See \`docs/deployment.md\` for manual installation, the reverse proxy, backups and
+          uninstalling.
 
           ## Verify
 
@@ -212,16 +216,16 @@ jobs:
       # The attached install script installs this release unless told otherwise.
       - name: Stamp the install script
         run: |
-          sed "s/^DEFAULT_VERSION=\"\"\$/DEFAULT_VERSION=\"${VERSION}\"/" packaging/server/install.sh > dist/install.sh
-          grep -qx "DEFAULT_VERSION=\"${VERSION}\"" dist/install.sh
-          chmod 0755 dist/install.sh
+          sed "s/^DEFAULT_VERSION=\"\"\$/DEFAULT_VERSION=\"${VERSION}\"/" packaging/server/cloud.server.sh > dist/cloud.server.sh
+          grep -qx "DEFAULT_VERSION=\"${VERSION}\"" dist/cloud.server.sh
+          chmod 0755 dist/cloud.server.sh
 
       - name: Write SHA256SUMS
         run: |
           cd dist
           set -- *.tar.gz
           test "$#" -eq 4
-          sha256sum -- "$@" install.sh > SHA256SUMS
+          sha256sum -- "$@" cloud.server.sh > SHA256SUMS
           cat SHA256SUMS
 
       - name: Upload the release files
@@ -266,7 +270,7 @@ jobs:
         run: packaging/server/test-static.sh "${ARCHIVE}"
 
       - name: Install, upgrade and uninstall
-        run: packaging/server/test-install.sh dist/install.sh "${ARCHIVE}" dist/SHA256SUMS
+        run: packaging/server/test-install.sh dist/cloud.server.sh "${ARCHIVE}" dist/SHA256SUMS
 
   publish:
     name: Draft release

@@ -11,7 +11,7 @@
 # `--uninstall` removes the service and the binary and keeps the configuration, the data and
 # the service user.
 #
-# Run `install.sh --help` for the options; docs/deployment.md describes the whole setup.
+# Run `cloud.server.sh --help` for the options; docs/deployment.md describes the whole setup.
 
 set -eu
 umask 022
@@ -29,9 +29,9 @@ usage() {
 Install, upgrade or uninstall the Gono Cloud server (Linux with systemd, or macOS).
 
 Usage:
-  sudo sh install.sh [--version VERSION] --base-url URL [options]   fresh install
-  sudo sh install.sh [--version VERSION] [options]                  upgrade
-  sudo sh install.sh --uninstall
+  sudo sh cloud.server.sh [--version VERSION] --base-url URL [options]   fresh install
+  sudo sh cloud.server.sh [--version VERSION] [options]                  upgrade
+  sudo sh cloud.server.sh --uninstall
 
 Release:
   --version VERSION       Release to install, for example 1.0.0. Defaults to the release this
@@ -480,7 +480,7 @@ prepare_config() {
 	data_dir=$2
 	config=$WORK/config.toml
 	{
-		printf '# Written by install.sh from config.example.toml of Gono Cloud %s on %s.\n' \
+		printf '# Written by cloud.server.sh from config.example.toml of Gono Cloud %s on %s.\n' \
 			"$NEW_VERSION" "$(date -u +%Y-%m-%d)"
 		printf '# Validate changes with: gono-cloud --config %s config check\n\n' "$CONFIG_FILE"
 		sed -e "s|^base_url = .*|base_url = \"$BASE_URL\"|" \
@@ -597,7 +597,7 @@ install_release() {
 		*)
 			# The unit only lets the server write /var/lib/gono-cloud.
 			mkdir -p "$DROPIN_DIR"
-			printf '# Written by install.sh: the data directory chosen at install time.\n[Service]\nReadWritePaths=%s\n' \
+			printf '# Written by cloud.server.sh: the data directory chosen at install time.\n[Service]\nReadWritePaths=%s\n' \
 				"$DATA_DIR" >"$DROPIN"
 			log "Wrote $DROPIN"
 			;;

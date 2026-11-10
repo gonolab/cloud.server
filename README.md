@@ -18,12 +18,13 @@ directory. The desktop client is tested with `nextcloudcmd` in CI; the mobile ap
 ## Quick start
 
 Release builds exist for Linux (x86_64 and aarch64; static binaries for any distribution, the
-install script needs systemd) and macOS 11 or newer. Download `install.sh` from a
+install script needs systemd) and macOS 11 or newer. Download the install script of the newest
 [server release](https://github.com/gonolab/gono.cloud/releases) and run it with the address
 users will open:
 
 ```sh
-sudo sh install.sh --base-url https://cloud.example.com
+curl -fsSLo cloud.server.sh https://gono.dev/cloud.server.sh
+sudo sh cloud.server.sh --base-url https://cloud.example.com
 ```
 
 It verifies and installs the binary, creates the `gono-cloud` service user, writes

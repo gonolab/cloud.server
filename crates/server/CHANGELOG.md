@@ -17,6 +17,12 @@ compatible within a major version: released clients keep working with newer serv
   files larger than its chunk size. The ranges must cover the file from byte 0 without gaps or
   overlaps; a session holds either numbered chunks or byte ranges.
 
+### Changed
+
+- The install script is attached to releases as `cloud.server.sh` instead of `install.sh`, and
+  `https://gono.dev/cloud.server.sh` redirects to the one of the newest server release. Release
+  1.0.0 carries both names.
+
 ## [1.0.0] - 2026-11-10
 
 First release of the rewrite on top of [dav-server-rs](https://github.com/messense/dav-server-rs).

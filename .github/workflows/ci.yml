@@ -157,7 +157,7 @@ jobs:
         run: packaging/server/test-static.sh dist/*.tar.gz
 
       - name: Install, upgrade and uninstall
-        run: packaging/server/test-install.sh packaging/server/install.sh dist/*.tar.gz
+        run: packaging/server/test-install.sh packaging/server/cloud.server.sh dist/*.tar.gz
 
   msrv:
     name: Minimum supported Rust version

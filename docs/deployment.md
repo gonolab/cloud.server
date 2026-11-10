@@ -20,13 +20,20 @@ Commands below use the Linux paths. On macOS, replace them as listed in
 ## Installing with the install script
 
 Every server release on the [releases page](https://github.com/gonolab/gono.cloud/releases)
-has an `install.sh` that installs that release. Download it, read it if you like, and run it as
-root with the public address of the server:
+has a `cloud.server.sh` that installs that release. `https://gono.dev/cloud.server.sh`
+redirects to the one of the newest server release
+(`https://github.com/gonolab/gono.cloud/releases/latest/download/cloud.server.sh`). Download
+it, read it if you like, and run it as root with the public address of the server:
 
 ```sh
-curl -fsSLO https://github.com/gonolab/gono.cloud/releases/download/server-v1.0.0/install.sh
-sudo sh install.sh --base-url https://cloud.example.com
+curl -fsSLo cloud.server.sh https://gono.dev/cloud.server.sh
+sudo sh cloud.server.sh --base-url https://cloud.example.com
 ```
+
+To install a particular release, take its script instead
+(`https://github.com/gonolab/gono.cloud/releases/download/server-v1.0.0/cloud.server.sh`) or
+pass `--version`. Release 1.0.0 also carries the same script under its original name,
+`install.sh`.
 
 The script:
 
@@ -51,13 +58,13 @@ Options for a fresh install:
 |---|---|
 | `--base-url URL` | Public origin, exactly as users type it: `https://cloud.example.com`, no path. Required. |
 | `--admin NAME` | Username of the first admin account (default `admin`). |
-| `--admin-password-stdin` | Read the admin's password from standard input instead of the terminal, for automated installs: `printf '%s\n' "$PASSWORD" \| sudo sh install.sh ... --admin-password-stdin`. |
+| `--admin-password-stdin` | Read the admin's password from standard input instead of the terminal, for automated installs: `printf '%s\n' "$PASSWORD" \| sudo sh cloud.server.sh ... --admin-password-stdin`. |
 | `--data-dir DIR` | Keep the users' files in `DIR` instead of `/var/lib/gono-cloud/data`. The directory must be new or empty. On Linux the script adds a systemd drop-in that lets the service write it. |
 | `--no-start` | Install everything but do not start the service. |
 | `--archive FILE` | Install a downloaded archive instead of downloading one (offline installs). `SHA256SUMS` must be next to it, or name it with `--checksums FILE`. |
 | `--version VERSION` | Install another release than the one the script came from. |
 
-`sh install.sh --help` lists every option.
+`sh cloud.server.sh --help` lists every option.
 
 ### Verifying a download yourself
 
@@ -269,12 +276,15 @@ the file must be in a writable path.
 ## Upgrading
 
 Read the [changelog](../crates/server/CHANGELOG.md) of the new release first. Then download its
-`install.sh` and run it without `--base-url`:
+`cloud.server.sh` and run it without `--base-url`:
 
 ```sh
-curl -fsSLO https://github.com/gonolab/gono.cloud/releases/download/server-v1.0.1/install.sh
-sudo sh install.sh
+curl -fsSLo cloud.server.sh https://gono.dev/cloud.server.sh   # the newest server release
+sudo sh cloud.server.sh
 ```
+
+To upgrade to a particular release instead, download the script from that release
+(`https://github.com/gonolab/gono.cloud/releases/download/server-v<version>/cloud.server.sh`).
 
 The script checks that the new binary accepts the existing configuration, stops the service,
 copies the database to `/var/lib/gono-cloud/backups/<time>-<old version>/`, replaces the binary
@@ -288,7 +298,7 @@ database from the backup taken before the upgrade (see [Restoring](#restoring)),
 service:
 
 ```sh
-sudo sh install.sh --version 1.0.0 --no-start   # the install.sh of any release
+sudo sh cloud.server.sh --version 1.0.0 --no-start   # the cloud.server.sh of any release
 # restore /var/lib/gono-cloud/backups/<time>-1.0.0/gono-cloud.db as described below
 sudo systemctl start gono-cloud
 ```
@@ -377,7 +387,7 @@ within a few seconds, others at their next poll.
 ## Uninstalling
 
 ```sh
-sudo sh install.sh --uninstall
+sudo sh cloud.server.sh --uninstall
 ```
 
 This stops and removes the service and the binary. The configuration, the database, the files,

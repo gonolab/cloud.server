@@ -98,7 +98,13 @@ Each component keeps:
 
 GitHub marks one release of the repository as "latest", whatever the component. Install
 scripts and documentation therefore name a component's release by its tag
-(`releases/download/server-v1.0.0/...`), never through `releases/latest`.
+(`releases/download/server-v1.0.0/...`), with one exception: the server's install script is
+published under `https://gono.dev/cloud.server.sh`, which redirects to
+`releases/latest/download/cloud.server.sh`. So "latest" must always be a server release:
+
+- publish every server release (except prereleases) with "Set as the latest release";
+- publish the releases of every other component without it (`gh release edit <tag>
+  --latest=false`), or that link breaks.
 
 ### The protocol stays backward compatible
 

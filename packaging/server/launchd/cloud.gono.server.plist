@@ -3,7 +3,7 @@
 <!--
   launchd job of the Gono Cloud server.
 
-  Installed by packaging/server/install.sh as /Library/LaunchDaemons/cloud.gono.server.plist
+  Installed by packaging/server/cloud.server.sh as /Library/LaunchDaemons/cloud.gono.server.plist
   (owned by root:wheel, mode 0644) and replaced on upgrades. See docs/deployment.md.
 
   Layout: binary /usr/local/bin/gono-cloud, configuration /usr/local/etc/gono-cloud/config.toml,

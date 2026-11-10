@@ -40,12 +40,14 @@ not affect the server:
 
 ## Installing
 
-Download `install.sh` from the release you want and run it as root. It downloads that release's
-archive for this machine, verifies it against `SHA256SUMS`, installs the binary and the service,
-and on a fresh install writes the configuration and creates the first admin account:
+Download `cloud.server.sh` from the release you want and run it as root. It downloads that
+release's archive for this machine, verifies it against `SHA256SUMS`, installs the binary and the
+service, and on a fresh install writes the configuration and creates the first admin account.
+`https://gono.dev/cloud.server.sh` redirects to the script of the newest server release:
 
 ```sh
-sudo sh install.sh --base-url https://cloud.example.com
+curl -fsSLo cloud.server.sh https://gono.dev/cloud.server.sh
+sudo sh cloud.server.sh --base-url https://cloud.example.com
 ```
 
 The deployment guide covers the details, a manual installation, the reverse proxy, upgrades,
@@ -56,9 +58,9 @@ backups and uninstalling:
 
 | File | Purpose |
 |---|---|
-| `install.sh` | Installer for Linux (systemd) and macOS (launchd); `--help` lists its options |
+| `cloud.server.sh` | Installer for Linux (systemd) and macOS (launchd); `--help` lists its options |
 | `package.sh` | Packs a compiled binary into a release archive |
-| `test-install.sh` | End-to-end test of `install.sh`; installs a service, so it only runs in CI |
+| `test-install.sh` | End-to-end test of `cloud.server.sh`; installs a service, so it only runs in CI |
 | `test-static.sh` | Checks that a Linux archive's binary is static and runs without glibc (containers) |
 | `systemd/`, `launchd/` | Service definitions shipped in the archives |
 | `zigbuild-requirements.txt` | Pinned zig toolchain for the static Linux builds |

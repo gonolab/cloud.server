@@ -57,7 +57,7 @@ fn refuse_root_on_foreign_install(config: &Config) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The service user the installer creates (`packaging/server/install.sh`), for hints.
+/// The service user the installer creates (`packaging/server/cloud.server.sh`), for hints.
 #[cfg(target_os = "macos")]
 const SERVICE_USER: &str = "_gono-cloud";
 #[cfg(all(unix, not(target_os = "macos")))]

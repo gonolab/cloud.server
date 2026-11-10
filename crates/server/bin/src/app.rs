@@ -1587,6 +1587,117 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn chunked_uploads_accept_rclone_byte_ranges() {
+        let f = fixture().await;
+        let full = Some(f.full.as_str());
+        // rclone's Nextcloud backend: MKCOL without Destination, chunks named by their byte
+        // range (15 digits, end inclusive), MOVE with Destination and X-OC-Mtime but without
+        // OC-Total-Length.
+        let session = format!("{UPLOADS}/rclone-chunked-upload-0123456789abcdef");
+        let mkcol = f.send("MKCOL", &format!("{session}/"), full, &[], "").await;
+        assert_eq!(mkcol.status, StatusCode::CREATED, "{}", mkcol.body);
+        let form = [("Content-Type", "application/x-www-form-urlencoded")];
+        for (name, body) in [
+            ("000000000000006-000000000000010", "world"),
+            ("000000000000000-000000000000005", "hello "),
+        ] {
+            let chunk = f
+                .send("PUT", &format!("{session}/{name}"), full, &form, body)
+                .await;
+            assert_eq!(chunk.status, StatusCode::CREATED, "{name}: {}", chunk.body);
+        }
+        // A chunk shorter than its range, and a numbered chunk in a session of byte ranges.
+        for (name, body) in [("000000000000011-000000000000020", "short"), ("00003", "!")] {
+            let refused = f
+                .send("PUT", &format!("{session}/{name}"), full, &form, body)
+                .await;
+            assert_eq!(
+                refused.status,
+                StatusCode::BAD_REQUEST,
+                "{name}: {}",
+                refused.body
+            );
+        }
+        let moved = f
+            .send(
+                "MOVE",
+                &format!("{session}/.file"),
+                full,
+                &[
+                    (
+                        "Destination",
+                        "http://localhost/remote.php/dav/files/alice/rc.bin",
+                    ),
+                    ("X-OC-Mtime", "1700000000"),
+                ],
+                "",
+            )
+            .await;
+        assert_eq!(moved.status, StatusCode::CREATED, "{}", moved.body);
+        assert_eq!(moved.header("x-oc-mtime"), "accepted");
+        let get = f
+            .send("GET", &format!("{FILES}/rc.bin"), full, &[], "")
+            .await;
+        assert_eq!(get.body, "hello world");
+        assert_eq!(get.header("last-modified"), "Tue, 14 Nov 2023 22:13:20 GMT");
+
+        // Without OC-Total-Length the ranges still have to cover the file without a gap.
+        let gap = format!("{UPLOADS}/rclone-gap");
+        let gap_destination = "http://localhost/remote.php/dav/files/alice/gap.bin";
+        f.send("MKCOL", &gap, full, &[], "").await;
+        for (name, body) in [("0-1", "ab"), ("4-5", "ef")] {
+            let chunk = f
+                .send("PUT", &format!("{gap}/{name}"), full, &[], body)
+                .await;
+            assert_eq!(chunk.status, StatusCode::CREATED, "{name}: {}", chunk.body);
+        }
+        let refused = f
+            .send(
+                "MOVE",
+                &format!("{gap}/.file"),
+                full,
+                &[("Destination", gap_destination)],
+                "",
+            )
+            .await;
+        assert_eq!(refused.status, StatusCode::BAD_REQUEST);
+        assert!(
+            refused
+                .body
+                .contains("Chunk 4-5 starts at byte 4, expected 2"),
+            "{}",
+            refused.body
+        );
+        assert_eq!(
+            f.send("GET", &format!("{FILES}/gap.bin"), full, &[], "")
+                .await
+                .status,
+            StatusCode::NOT_FOUND
+        );
+        // The client can still repair the session: drop a chunk, send the missing bytes.
+        let deleted = f.send("DELETE", &format!("{gap}/4-5"), full, &[], "").await;
+        assert_eq!(deleted.status, StatusCode::NO_CONTENT);
+        let filled = f
+            .send("PUT", &format!("{gap}/2-5"), full, &[], "cdef")
+            .await;
+        assert_eq!(filled.status, StatusCode::CREATED, "{}", filled.body);
+        let moved = f
+            .send(
+                "MOVE",
+                &format!("{gap}/.file"),
+                full,
+                &[("Destination", gap_destination)],
+                "",
+            )
+            .await;
+        assert_eq!(moved.status, StatusCode::CREATED, "{}", moved.body);
+        let get = f
+            .send("GET", &format!("{FILES}/gap.bin"), full, &[], "")
+            .await;
+        assert_eq!(get.body, "abcdef");
+    }
+
+    #[tokio::test]
     async fn the_janitor_removes_expired_and_orphaned_uploads() {
         let f = fixture().await;
         let full = Some(f.full.as_str());

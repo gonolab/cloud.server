@@ -10,6 +10,13 @@ compatible within a major version: released clients keep working with newer serv
 
 ## [Unreleased]
 
+### Added
+
+- Chunked upload accepts chunks named by byte range (`<start>-<end>`, the end inclusive), as
+  rclone's Nextcloud backend sends them, so that `rclone` with `vendor = nextcloud` can upload
+  files larger than its chunk size. The ranges must cover the file from byte 0 without gaps or
+  overlaps; a session holds either numbered chunks or byte ranges.
+
 ## [1.0.0] - 2026-11-10
 
 First release of the rewrite on top of [dav-server-rs](https://github.com/messense/dav-server-rs).

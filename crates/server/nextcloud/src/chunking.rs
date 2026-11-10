@@ -6,10 +6,23 @@
 //! | Request | Effect |
 //! |---|---|
 //! | `MKCOL <session>` | Creates the session. `Destination` (the final URL under `/remote.php/dav/files/<user>/`) and `OC-Total-Length` are recorded when sent; older clients send the destination only with the `MOVE`. |
-//! | `PUT <session>/<n>` | Stores chunk `<n>` (decimal digits). A `Destination` must match the session's. |
+//! | `PUT <session>/<name>` | Stores a chunk (see [chunk names](#chunk-names)). A `Destination` must match the session's. |
 //! | `PROPFIND <session>` | Lists the chunks received so far (`Depth: 1`), so that an interrupted upload can resume. |
-//! | `MOVE <session>/.file` | Assembles the chunks in numeric order into `Destination`: `201` for a new file, `204` for a replaced one, with `ETag`, `OC-ETag`, `OC-FileId` and `X-OC-MTime`. |
-//! | `DELETE <session>` / `DELETE <session>/<n>` | Cancels the upload / drops one chunk. |
+//! | `MOVE <session>/.file` | Assembles the chunks in order into `Destination`: `201` for a new file, `204` for a replaced one, with `ETag`, `OC-ETag`, `OC-FileId` and `X-OC-MTime`. |
+//! | `DELETE <session>` / `DELETE <session>/<name>` | Cancels the upload / drops one chunk. |
+//!
+//! # Chunk names
+//!
+//! A session holds chunks of one of two kinds; a chunk of the other kind is refused with `400`:
+//!
+//! - **Numbers** (1 to 20 decimal digits): the Nextcloud clients number their chunks (chunking
+//!   v2 uses 1 to 10000, older clients zero-pad). They are assembled in numeric order; `1` and
+//!   `00001` are the same chunk, and the newer one wins.
+//! - **Byte ranges** `<start>-<end>` (two such numbers, `end` inclusive): rclone's Nextcloud
+//!   backend names its chunks by the bytes they hold, for example
+//!   `000000010485760-000000020971519`, and creates the session without a `Destination`. A
+//!   chunk must be exactly as long as its range, and at assembly the ranges must cover the file
+//!   from byte 0 without gaps or overlaps. A range replaces an older chunk with the same start.
 //!
 //! # Guarantees
 //!
@@ -21,7 +34,9 @@
 //!   the file being replaced.
 //! - **Length**: the assembled size must equal `OC-Total-Length` (of the `MOVE`, or of the
 //!   `MKCOL`); otherwise the `MOVE` fails with `400` and nothing is written (legacy defect 5).
-//!   An announced length larger than the free space is refused with `507` up front.
+//!   An announced length larger than the free space is refused with `507` up front. Byte-range
+//!   chunks are checked against their ranges even without `OC-Total-Length` (rclone sends none),
+//!   so a missing or truncated chunk in the middle cannot produce a file with a hole.
 //! - **Atomic and durable**: chunks are written to `tmp/` and synced before they appear in the
 //!   session directory. The assembly writes a new file in `tmp/`, syncs it and renames it over
 //!   the destination ([`ScopedFs::install_file`], which also syncs the directory), and the
@@ -76,7 +91,7 @@ pub const MAX_CHUNKS: usize = 10_000;
 /// Longest accepted upload id, in bytes.
 const MAX_UPLOAD_ID_BYTES: usize = 255;
 
-/// Longest accepted chunk name, in digits.
+/// Longest accepted chunk number or byte offset, in digits.
 const MAX_CHUNK_NAME_DIGITS: usize = 20;
 
 /// Name of the virtual file whose `MOVE` assembles the upload.
@@ -188,15 +203,93 @@ fn fs_error(err: FsError, context: &str) -> Reject {
     }
 }
 
-/// The numeric value of a chunk name: 1 to 20 decimal digits.
-fn chunk_number(name: &str) -> Option<u64> {
-    if name.is_empty()
-        || name.len() > MAX_CHUNK_NAME_DIGITS
-        || !name.bytes().all(|b| b.is_ascii_digit())
-    {
-        return None;
+/// What a chunk name says about the chunk's place in the file (see "Chunk names" in the
+/// module documentation).
+///
+/// The derived order is the assembly order within one session, which holds one kind only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum ChunkName {
+    /// A chunk number.
+    Number(u64),
+    /// The bytes `start..=end` of the file.
+    Range { start: u64, end: u64 },
+}
+
+impl ChunkName {
+    /// Parses a number of 1 to 20 decimal digits, or two of them joined by `-` with the end not
+    /// before the start.
+    fn parse(name: &str) -> Option<Self> {
+        fn number(digits: &str) -> Option<u64> {
+            if digits.is_empty()
+                || digits.len() > MAX_CHUNK_NAME_DIGITS
+                || !digits.bytes().all(|b| b.is_ascii_digit())
+            {
+                return None;
+            }
+            digits.parse().ok()
+        }
+        match name.split_once('-') {
+            None => number(name).map(Self::Number),
+            Some((start, end)) => {
+                let (start, end) = (number(start)?, number(end)?);
+                (start <= end).then_some(Self::Range { start, end })
+            }
+        }
     }
-    name.parse().ok()
+
+    /// The chunk's place in the file: chunks of the same place replace each other (`1` and
+    /// `00001`, or two ranges with the same start).
+    fn position(self) -> u64 {
+        match self {
+            Self::Number(number) => number,
+            Self::Range { start, .. } => start,
+        }
+    }
+
+    /// Whether `other` is of the same kind (number or byte range).
+    fn same_kind(self, other: Self) -> bool {
+        matches!(
+            (self, other),
+            (Self::Number(_), Self::Number(_)) | (Self::Range { .. }, Self::Range { .. })
+        )
+    }
+
+    /// The exact length of a byte-range chunk.
+    fn range_len(self) -> Option<u64> {
+        match self {
+            Self::Number(_) => None,
+            Self::Range { start, end } => Some((end - start).saturating_add(1)),
+        }
+    }
+}
+
+/// A stored chunk: its parsed name, file name, length and modification time.
+type StoredChunk = (ChunkName, String, u64, SystemTime);
+
+/// Checks that `chunks` (in assembly order) can be assembled: all of one kind, and byte ranges
+/// as long as their ranges and covering the file from byte 0 without gaps or overlaps.
+fn check_assembly(chunks: &[StoredChunk]) -> Result<(), String> {
+    let Some((first, ..)) = chunks.first() else {
+        return Ok(());
+    };
+    let mut next = 0;
+    for (chunk, name, size, _) in chunks {
+        if !chunk.same_kind(*first) {
+            return Err("The upload mixes numbered chunks and byte ranges".to_owned());
+        }
+        if let ChunkName::Range { start, end } = *chunk {
+            if start != next {
+                return Err(format!(
+                    "Chunk {name} starts at byte {start}, expected {next}"
+                ));
+            }
+            if Some(*size) != chunk.range_len() {
+                return Err(format!("Chunk {name} holds {size} bytes"));
+            }
+            next = end.saturating_add(1);
+        }
+    }
+    Ok(())
 }
 
 fn valid_upload_id(id: &str) -> bool {
@@ -317,8 +410,8 @@ fn preconditions_hold(headers: &HeaderMap, current: Option<&str>) -> bool {
     true
 }
 
-/// Lists the chunks of a session directory: `(number, name, length)`, in assembly order.
-fn list_chunks(dir: &Path) -> io::Result<Vec<(u64, String, u64, SystemTime)>> {
+/// Lists the chunks of a session directory in assembly order.
+fn list_chunks(dir: &Path) -> io::Result<Vec<StoredChunk>> {
     let mut chunks = Vec::new();
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
@@ -331,9 +424,9 @@ fn list_chunks(dir: &Path) -> io::Result<Vec<(u64, String, u64, SystemTime)>> {
         let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
             continue;
         };
-        if let (true, Some(number)) = (meta.is_file(), chunk_number(&name)) {
+        if let (true, Some(chunk)) = (meta.is_file(), ChunkName::parse(&name)) {
             chunks.push((
-                number,
+                chunk,
                 name,
                 meta.len(),
                 meta.modified().unwrap_or(UNIX_EPOCH),
@@ -567,7 +660,7 @@ impl ChunkedUploads {
         Ok(empty(StatusCode::CREATED))
     }
 
-    /// `PUT <session>/<n>`.
+    /// `PUT <session>/<name>`.
     async fn put_chunk<B>(
         &self,
         ctx: &Ctx,
@@ -580,10 +673,10 @@ impl ChunkedUploads {
         B: Body<Data = Bytes> + Send + Unpin + 'static,
         B::Error: std::error::Error + Send + Sync + 'static,
     {
-        let Some(number) = chunk_number(name) else {
+        let Some(chunk) = ChunkName::parse(name) else {
             return Err(error(
                 StatusCode::BAD_REQUEST,
-                "Chunk names must be decimal numbers",
+                "Chunk names must be decimal numbers or byte ranges (<start>-<end>)",
             ));
         };
         let identity = ctx.identity();
@@ -614,6 +707,14 @@ impl ChunkedUploads {
 
         let length = header_str(headers, header::CONTENT_LENGTH.as_str())
             .and_then(|value| value.parse::<u64>().ok());
+        if let (Some(expected), Some(length)) = (chunk.range_len(), length)
+            && expected != length
+        {
+            return Err(error(
+                StatusCode::BAD_REQUEST,
+                "The chunk length does not match its byte range",
+            ));
+        }
         let dir = self.layout().upload_session_dir(owner, upload_id);
         if let (Some(total), Some(length)) = (session.total_size, length) {
             let listing_dir = dir.clone();
@@ -622,7 +723,7 @@ impl ChunkedUploads {
                 .map_err(|err| internal("list chunks", &err))?;
             let others: u64 = chunks
                 .iter()
-                .filter(|(other, _, _, _)| *other != number)
+                .filter(|(other, _, _, _)| other.position() != chunk.position())
                 .map(|(_, _, size, _)| size)
                 .sum();
             if others.saturating_add(length) > total {
@@ -652,6 +753,18 @@ impl ChunkedUploads {
             .map_err(|err| internal("create chunk file", &err))?;
         let received = receive(body, tokio::fs::File::from_std(file), length).await;
         let written = match received {
+            // Without a Content-Length the length of a byte range is known only now.
+            Ok(written)
+                if chunk
+                    .range_len()
+                    .is_some_and(|expected| expected != written) =>
+            {
+                let _ = tokio::fs::remove_file(&temp).await;
+                return Err(error(
+                    StatusCode::BAD_REQUEST,
+                    "The chunk length does not match its byte range",
+                ));
+            }
             Ok(written) => written,
             Err(reason) => {
                 let _ = tokio::fs::remove_file(&temp).await;
@@ -675,34 +788,46 @@ impl ChunkedUploads {
                 Ok(_) => error(StatusCode::NOT_FOUND, "Upload session not found"),
             });
         }
-        let name = name.to_owned();
+        let chunk_name = name.to_owned();
         let installed = blocking(move || {
             create_private_dir_all(&dir).map_err(io::Error::other)?;
             let chunks = list_chunks(&dir)?;
-            let replaced = chunks.iter().any(|(_, other, _, _)| *other == name);
+            if chunks
+                .iter()
+                .any(|(other, _, _, _)| !other.same_kind(chunk))
+            {
+                std::fs::remove_file(&temp)?;
+                return Ok(Install::MixedKinds);
+            }
+            let replaced = chunks.iter().any(|(_, other, _, _)| *other == chunk_name);
             if !replaced && chunks.len() >= MAX_CHUNKS {
                 std::fs::remove_file(&temp)?;
-                return Ok(None);
+                return Ok(Install::TooMany);
             }
-            // "1" and "00001" are the same chunk: the newer one wins.
-            for (other_number, other, _, _) in &chunks {
-                if *other_number == number && *other != name {
-                    std::fs::remove_file(dir.join(other))?;
+            // "1" and "00001" are the same chunk, as are two ranges with the same start: the
+            // newer one wins.
+            for (other, other_name, _, _) in &chunks {
+                if other.position() == chunk.position() && *other_name != chunk_name {
+                    std::fs::remove_file(dir.join(other_name))?;
                 }
             }
-            std::fs::rename(&temp, dir.join(&name)).inspect_err(|_| {
+            std::fs::rename(&temp, dir.join(&chunk_name)).inspect_err(|_| {
                 let _ = std::fs::remove_file(&temp);
             })?;
-            Ok(Some(replaced))
+            Ok(Install::Stored { replaced })
         })
         .await
         .map_err(|err| internal("store chunk", &err))?;
         match installed {
-            None => Err(error(StatusCode::BAD_REQUEST, "Too many chunks")),
-            Some(replaced) => {
+            Install::TooMany => Err(error(StatusCode::BAD_REQUEST, "Too many chunks")),
+            Install::MixedKinds => Err(error(
+                StatusCode::BAD_REQUEST,
+                "An upload cannot mix numbered chunks and byte ranges",
+            )),
+            Install::Stored { replaced } => {
                 tracing::debug!(
                     upload = upload_id,
-                    chunk = number,
+                    chunk = %name,
                     bytes = written,
                     "chunk stored"
                 );
@@ -773,6 +898,14 @@ impl ChunkedUploads {
         let chunks = blocking(move || list_chunks(&listing_dir))
             .await
             .map_err(|err| internal("list chunks", &err))?;
+        if let Err(message) = check_assembly(&chunks) {
+            tracing::info!(
+                upload = upload_id,
+                reason = %message,
+                "refusing to assemble a chunked upload"
+            );
+            return Err(error(StatusCode::BAD_REQUEST, &message));
+        }
         let size: u64 = chunks.iter().map(|(_, _, size, _)| size).sum();
         if let Some(expected) = expected
             && expected != size
@@ -892,14 +1025,14 @@ impl ChunkedUploads {
         Ok(empty(StatusCode::NO_CONTENT))
     }
 
-    /// `DELETE <session>/<n>`.
+    /// `DELETE <session>/<name>`.
     async fn delete_chunk(
         &self,
         ctx: &Ctx,
         upload_id: &str,
         name: &str,
     ) -> Result<Response<DavBody>, Reject> {
-        if chunk_number(name).is_none() {
+        if ChunkName::parse(name).is_none() {
             return Err(error(StatusCode::NOT_FOUND, "No such chunk"));
         }
         let owner = ctx.identity().user_id;
@@ -985,7 +1118,7 @@ impl ChunkedUploads {
                 let chunks = blocking(move || list_chunks(&dir))
                     .await
                     .map_err(|err| internal("list chunks", &err))?;
-                let chunk_item = |(_, name, size, modified): &(u64, String, u64, SystemTime)| {
+                let chunk_item = |(_, name, size, modified): &StoredChunk| {
                     let seconds = modified
                         .duration_since(UNIX_EPOCH)
                         .map_or(0, |elapsed| elapsed.as_nanos());
@@ -1092,6 +1225,16 @@ impl ChunkedUploads {
     }
 }
 
+/// What became of a received chunk when it was moved into its session.
+enum Install {
+    /// Stored; `replaced` if a chunk of the same name was there before.
+    Stored { replaced: bool },
+    /// Refused: the session holds [`MAX_CHUNKS`] chunks already.
+    TooMany,
+    /// Refused: the session holds chunks of the other kind (numbers or byte ranges).
+    MixedKinds,
+}
+
 /// Why a chunk body was not stored.
 enum Receive {
     /// The body ended before `Content-Length` bytes (or carried more).
@@ -1165,20 +1308,93 @@ mod tests {
     }
 
     #[test]
-    fn chunk_names_are_numbers() {
-        assert_eq!(chunk_number("00001"), Some(1));
-        assert_eq!(chunk_number("10000"), Some(10_000));
-        assert_eq!(chunk_number("0"), Some(0));
+    fn chunk_names_are_numbers_or_byte_ranges() {
+        assert_eq!(ChunkName::parse("00001"), Some(ChunkName::Number(1)));
+        assert_eq!(ChunkName::parse("10000"), Some(ChunkName::Number(10_000)));
+        assert_eq!(ChunkName::parse("0"), Some(ChunkName::Number(0)));
+        // rclone: byte offsets zero-padded to 15 digits, the end inclusive.
+        assert_eq!(
+            ChunkName::parse("000000010485760-000000020971519"),
+            Some(ChunkName::Range {
+                start: 10_485_760,
+                end: 20_971_519
+            })
+        );
+        assert_eq!(
+            ChunkName::parse("5-5"),
+            Some(ChunkName::Range { start: 5, end: 5 })
+        );
+        let too_long = "9".repeat(21);
+        let too_long_end = format!("0-{too_long}");
         for bad in [
             "",
             "not-a-number",
             "1a",
             "-1",
             "+1",
+            "1-",
+            "-",
+            "1--2",
+            "1-2-3",
+            "1 -2",
+            "5-4",
             ".file",
-            &"9".repeat(21),
+            "18446744073709551616",
+            &too_long,
+            &too_long_end,
         ] {
-            assert_eq!(chunk_number(bad), None, "{bad}");
+            assert_eq!(ChunkName::parse(bad), None, "{bad}");
+        }
+    }
+
+    #[test]
+    fn chunk_names_know_their_place_and_length() {
+        assert_eq!(ChunkName::Number(7).position(), 7);
+        assert_eq!(ChunkName::Number(7).range_len(), None);
+        let range = ChunkName::Range { start: 10, end: 19 };
+        assert_eq!(range.position(), 10);
+        assert_eq!(range.range_len(), Some(10));
+        assert!(range.same_kind(ChunkName::Range { start: 0, end: 0 }));
+        assert!(!range.same_kind(ChunkName::Number(10)));
+        assert!(ChunkName::Number(1).same_kind(ChunkName::Number(2)));
+        // The derived order is the assembly order.
+        assert!(ChunkName::Number(2) < ChunkName::Number(10));
+        assert!(range < ChunkName::Range { start: 20, end: 20 });
+    }
+
+    #[test]
+    fn assembly_needs_one_kind_and_ranges_without_gaps() {
+        let chunk = |name: &str, size: u64| -> StoredChunk {
+            let parsed = ChunkName::parse(name).unwrap_or_else(|| panic!("{name}"));
+            (parsed, name.to_owned(), size, UNIX_EPOCH)
+        };
+        assert_eq!(check_assembly(&[]), Ok(()));
+        // Numbered chunks may skip numbers; OC-Total-Length guards their sum.
+        assert_eq!(check_assembly(&[chunk("1", 5), chunk("3", 9)]), Ok(()));
+        assert_eq!(
+            check_assembly(&[chunk("0-4", 5), chunk("5-9", 5), chunk("10-10", 1)]),
+            Ok(())
+        );
+        for (chunks, message) in [
+            (
+                vec![chunk("0-4", 5), chunk("6-9", 4)],
+                "Chunk 6-9 starts at byte 6, expected 5",
+            ),
+            (
+                vec![chunk("5-9", 5)],
+                "Chunk 5-9 starts at byte 5, expected 0",
+            ),
+            (
+                vec![chunk("0-4", 5), chunk("3-9", 7)],
+                "Chunk 3-9 starts at byte 3, expected 5",
+            ),
+            (vec![chunk("0-4", 4)], "Chunk 0-4 holds 4 bytes"),
+            (
+                vec![chunk("1", 5), chunk("0-4", 5)],
+                "The upload mixes numbered chunks and byte ranges",
+            ),
+        ] {
+            assert_eq!(check_assembly(&chunks), Err(message.to_owned()));
         }
     }
 

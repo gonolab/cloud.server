@@ -18,7 +18,8 @@ listed under "In scope" is deferred until after v1.
   `DELETE`, `PROPPATCH`, `LOCK`, `UNLOCK`, served through dav-server-rs.
 - **Nextcloud protocol surface**:
   - `status.php`, capabilities, and the OCS user endpoints the clients call at startup.
-  - Chunked upload v2 (`/remote.php/dav/uploads/...`).
+  - Chunked upload v2 (`/remote.php/dav/uploads/...`), also with the byte-range chunk names
+    (`<start>-<end>`) of rclone's Nextcloud backend.
   - Login Flow v2 with an explicit consent page; every device gets its own newly minted app
     password.
   - Live properties (`oc:fileid`, `oc:permissions`, `oc:favorite`, ...) and `OC-*` response

@@ -990,6 +990,100 @@ async fn chunked_upload_rejects_invalid_chunk_names() {
     dav.delete_upload(&upload).await;
 }
 
+/// rclone's Nextcloud backend (`backend/webdav/chunking.go`) removes a leftover session, creates
+/// it without `Destination`, uploads chunks named by their byte range (`<start>-<end>`, padded to
+/// 15 digits, the end inclusive) one after another, and assembles them with `Destination` and
+/// `X-OC-Mtime` but without `OC-Total-Length`.
+#[tokio::test]
+async fn chunked_upload_accepts_rclone_byte_ranges() {
+    let Some(ctx) = Ctx::new().await else { return };
+    let dav = ctx.dav();
+    let upload = format!("rclone-chunked-upload-{}", random_id());
+    let rel = ctx.path("rclone.bin");
+    let content: Vec<u8> = (0..=250u8).cycle().take(2_500).collect();
+    let chunk_size = 1_000;
+
+    dav.send(dav.request("DELETE", &dav.upload_url(&format!("{upload}/"))))
+        .await
+        .expect(&[404]);
+    dav.send(dav.request("MKCOL", &dav.upload_url(&format!("{upload}/"))))
+        .await
+        .expect(&[201]);
+    for (index, chunk) in content.chunks(chunk_size).enumerate() {
+        let start = index * chunk_size;
+        let end = start + chunk.len() - 1;
+        dav.send(
+            dav.request(
+                "PUT",
+                &dav.upload_url(&format!("{upload}/{start:015}-{end:015}")),
+            )
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .body(chunk.to_vec()),
+        )
+        .await
+        .expect(&[201]);
+    }
+    let moved = dav
+        .send(
+            dav.request("MOVE", &dav.upload_url(&format!("{upload}/.file")))
+                .header("Destination", dav.url(&rel))
+                .header("X-OC-Mtime", "1700000000"),
+        )
+        .await;
+    moved.expect(&[201]);
+    assert_eq!(
+        moved.header("x-oc-mtime").as_deref(),
+        Some("accepted"),
+        "{}",
+        moved.describe()
+    );
+
+    assert_eq!(dav.read(&rel).await, content);
+    let entry = dav.stat(&rel).await;
+    assert_eq!(
+        entry.text(DAV, "getlastmodified").as_deref(),
+        Some("Tue, 14 Nov 2023 22:13:20 GMT")
+    );
+}
+
+/// Byte-range chunks must cover the file without gaps, also when no `OC-Total-Length` tells the
+/// server how large the file is.
+#[tokio::test]
+async fn chunked_upload_refuses_byte_ranges_with_a_gap() {
+    let Some(ctx) = Ctx::new().await else { return };
+    let dav = ctx.dav();
+    let upload = format!("acc-{}", random_id());
+    let rel = ctx.path("gap.bin");
+    dav.send(dav.request("MKCOL", &dav.upload_url(&upload)))
+        .await
+        .expect(&[201]);
+    for (name, body) in [("0-1", "ab"), ("4-5", "ef")] {
+        dav.send(
+            dav.request("PUT", &dav.upload_url(&format!("{upload}/{name}")))
+                .body(body),
+        )
+        .await
+        .expect(&[201]);
+    }
+    // A chunk that is not as long as its range, and a numbered chunk among byte ranges.
+    for (name, body) in [("6-9", "gh"), ("00003", "x")] {
+        dav.send(
+            dav.request("PUT", &dav.upload_url(&format!("{upload}/{name}")))
+                .body(body),
+        )
+        .await
+        .expect(&[400]);
+    }
+    dav.send(
+        dav.request("MOVE", &dav.upload_url(&format!("{upload}/.file")))
+            .header("Destination", dav.url(&rel)),
+    )
+    .await
+    .expect(&[400]);
+    dav.propfind(&rel, "0", "").await.expect(&[404]);
+    dav.delete_upload(&upload).await;
+}
+
 #[tokio::test]
 async fn chunked_upload_rejects_a_mismatched_destination() {
     let Some(ctx) = Ctx::new().await else { return };

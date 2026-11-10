@@ -44,5 +44,5 @@ their tags stay as they are.
 - Documentation: deployment (`docs/deployment.md`), reverse proxies (`docs/reverse-proxy.md`),
   v1 scope and the mobile test checklist.
 
-[Unreleased]: https://github.com/gonolab/cloud.server/compare/server-v1.0.0...HEAD
-[1.0.0]: https://github.com/gonolab/cloud.server/releases/tag/server-v1.0.0
+[Unreleased]: https://github.com/gonolab/gono.cloud/compare/server-v1.0.0...HEAD
+[1.0.0]: https://github.com/gonolab/gono.cloud/releases/tag/server-v1.0.0

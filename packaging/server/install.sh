@@ -19,7 +19,7 @@ umask 022
 # The release this copy installs by default. The release workflow fills it in for the copy it
 # attaches to a release; the copy in the repository needs --version.
 DEFAULT_VERSION=""
-REPO="gonolab/cloud.server"
+REPO="gonolab/gono.cloud"
 
 SERVICE_NAME="gono-cloud"
 LAUNCHD_LABEL="cloud.gono.server"
@@ -39,7 +39,7 @@ Release:
   --archive FILE          Install this release archive instead of downloading one. It is
                           verified against SHA256SUMS next to it (or --checksums).
   --checksums FILE        SHA256SUMS file for --archive.
-  --repo OWNER/NAME       GitHub repository to download from (default: gonolab/cloud.server).
+  --repo OWNER/NAME       GitHub repository to download from (default: gonolab/gono.cloud).
 
 Fresh install (ignored when a configuration exists):
   --base-url URL          Public origin of the server, for example https://cloud.example.com.

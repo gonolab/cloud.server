@@ -19,7 +19,7 @@ directory. The desktop client is tested with `nextcloudcmd` in CI; the mobile ap
 
 Release builds exist for Linux (x86_64 and aarch64; static binaries for any distribution, the
 install script needs systemd) and macOS 11 or newer. Download `install.sh` from a
-[server release](https://github.com/gonolab/cloud.server/releases) and run it with the address
+[server release](https://github.com/gonolab/gono.cloud/releases) and run it with the address
 users will open:
 
 ```sh

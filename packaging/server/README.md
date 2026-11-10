@@ -50,7 +50,7 @@ sudo sh install.sh --base-url https://cloud.example.com
 
 The deployment guide covers the details, a manual installation, the reverse proxy, upgrades,
 backups and uninstalling:
-<https://github.com/gonolab/cloud.server/blob/main/docs/deployment.md>.
+<https://github.com/gonolab/gono.cloud/blob/main/docs/deployment.md>.
 
 ## Repository files
 

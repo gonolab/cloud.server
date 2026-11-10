@@ -11,7 +11,7 @@
 
 [Unit]
 Description=Gono Cloud file server
-Documentation=https://github.com/gonolab/cloud.server/blob/main/docs/deployment.md
+Documentation=https://github.com/gonolab/gono.cloud/blob/main/docs/deployment.md
 # The server listens on loopback only; it needs no network-online.target.
 After=network.target
 

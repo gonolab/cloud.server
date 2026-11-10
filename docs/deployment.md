@@ -19,12 +19,12 @@ Commands below use the Linux paths. On macOS, replace them as listed in
 
 ## Installing with the install script
 
-Every server release on the [releases page](https://github.com/gonolab/cloud.server/releases)
+Every server release on the [releases page](https://github.com/gonolab/gono.cloud/releases)
 has an `install.sh` that installs that release. Download it, read it if you like, and run it as
 root with the public address of the server:
 
 ```sh
-curl -fsSLO https://github.com/gonolab/cloud.server/releases/download/server-v1.0.0/install.sh
+curl -fsSLO https://github.com/gonolab/gono.cloud/releases/download/server-v1.0.0/install.sh
 sudo sh install.sh --base-url https://cloud.example.com
 ```
 
@@ -66,7 +66,7 @@ hand, and that they were built by this repository's release workflow:
 
 ```sh
 sha256sum --check --ignore-missing SHA256SUMS      # macOS: shasum -a 256 --check --ignore-missing SHA256SUMS
-gh attestation verify gono-cloud-1.0.0-x86_64-unknown-linux-musl.tar.gz --repo gonolab/cloud.server
+gh attestation verify gono-cloud-1.0.0-x86_64-unknown-linux-musl.tar.gz --repo gonolab/gono.cloud
 ```
 
 ### Paths
@@ -272,7 +272,7 @@ Read the [changelog](../crates/server/CHANGELOG.md) of the new release first. Th
 `install.sh` and run it without `--base-url`:
 
 ```sh
-curl -fsSLO https://github.com/gonolab/cloud.server/releases/download/server-v1.0.1/install.sh
+curl -fsSLO https://github.com/gonolab/gono.cloud/releases/download/server-v1.0.1/install.sh
 sudo sh install.sh
 ```
 

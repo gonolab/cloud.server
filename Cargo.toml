@@ -21,7 +21,7 @@ edition = "2024"
 # CI checks the workspace with exactly this toolchain.
 rust-version = "1.94"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/gonolab/cloud.server"
+repository = "https://github.com/gonolab/gono.cloud"
 publish = false
 
 [workspace.dependencies]

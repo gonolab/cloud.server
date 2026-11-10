@@ -5,7 +5,7 @@
 Please report security problems privately, not in a public issue, pull request or discussion.
 
 Use GitHub's private vulnerability reporting: open
-[Report a vulnerability](https://github.com/gonolab/cloud.server/security/advisories/new) on
+[Report a vulnerability](https://github.com/gonolab/gono.cloud/security/advisories/new) on
 the repository's **Security** tab. The report stays visible only to you and the maintainers, and
 the discussion, the fix and the advisory happen in the same place.
 

@@ -52,6 +52,8 @@ compatible within a major version: released clients keep working with newer serv
   Nextcloud Android reported files that were already on the server as conflicts, for example
   after a reinstall or a lost response; images can still conflict, because their dimensions
   are not reported.
+- A `MOVE` that assembles a chunked upload session without any chunk is refused with `400`
+  unless a length of 0 was announced. Before, it replaced the destination with an empty file.
 
 ## [1.0.0] - 2026-11-10
 

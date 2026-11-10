@@ -1317,6 +1317,40 @@ async fn regression_chunked_upload_verifies_total_length() {
     dav.get(&rel).await.expect(&[404]);
 }
 
+/// Nextcloud Android never sends `OC-Total-Length`, so without this check a `MOVE` of a session
+/// that holds no chunks would replace the destination with an empty file.
+#[tokio::test]
+async fn chunked_upload_without_chunks_keeps_the_destination() {
+    let Some(ctx) = Ctx::new().await else { return };
+    let dav = ctx.dav();
+    let rel = ctx.path("precious.txt");
+    dav.write(&rel, "precious data").await;
+    let destination = dav.url(&rel);
+    let upload = format!("acc-{}", random_id());
+    dav.send(
+        dav.request("MKCOL", &dav.upload_url(&upload))
+            .header("Destination", &destination),
+    )
+    .await
+    .expect(&[201]);
+    let moved = dav
+        .send(
+            dav.request("MOVE", &dav.upload_url(&format!("{upload}/.file")))
+                .header("Destination", &destination),
+        )
+        .await;
+    dav.delete_upload(&upload).await;
+    moved.expect(&[400]);
+    assert_eq!(dav.read(&rel).await, b"precious data");
+
+    // An empty file announced as such is fine.
+    let upload = format!("acc-{}", random_id());
+    let empty = dav.url(&ctx.path("empty.txt"));
+    mkcol_upload(&dav, &upload, &empty, 0).await.expect(&[201]);
+    move_upload(&dav, &upload, &empty, 0).await.expect(&[201]);
+    assert_eq!(dav.read(&ctx.path("empty.txt")).await, b"");
+}
+
 #[tokio::test]
 async fn chunked_upload_can_be_cancelled() {
     let Some(ctx) = Ctx::new().await else { return };

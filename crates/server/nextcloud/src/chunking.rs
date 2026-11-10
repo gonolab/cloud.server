@@ -36,7 +36,10 @@
 //!   `MKCOL`); otherwise the `MOVE` fails with `400` and nothing is written (legacy defect 5).
 //!   An announced length larger than the free space is refused with `507` up front. Byte-range
 //!   chunks are checked against their ranges even without `OC-Total-Length` (rclone sends none),
-//!   so a missing or truncated chunk in the middle cannot produce a file with a hole.
+//!   so a missing or truncated chunk in the middle cannot produce a file with a hole. A session
+//!   without any chunk is assembled only when a length of 0 was announced: Nextcloud Android
+//!   never sends `OC-Total-Length`, and a `MOVE` of an empty session would otherwise replace
+//!   the destination with an empty file.
 //! - **Atomic and durable**: chunks are written to `tmp/` and synced before they appear in the
 //!   session directory. The assembly writes a new file in `tmp/`, syncs it and renames it over
 //!   the destination ([`ScopedFs::install_file`], which also syncs the directory), and the
@@ -910,6 +913,16 @@ impl ChunkedUploads {
             return Err(error(StatusCode::BAD_REQUEST, &message));
         }
         let size: u64 = chunks.iter().map(|(_, _, size, _)| size).sum();
+        if chunks.is_empty() && expected != Some(0) {
+            tracing::info!(
+                upload = upload_id,
+                "refusing to assemble a chunked upload without chunks"
+            );
+            return Err(error(
+                StatusCode::BAD_REQUEST,
+                "The upload session has no chunks",
+            ));
+        }
         if let Some(expected) = expected
             && expected != size
         {

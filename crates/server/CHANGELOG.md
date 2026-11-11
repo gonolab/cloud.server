@@ -10,6 +10,13 @@ compatible within a major version: released clients keep working with newer serv
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-11
+
+Fixes for the Nextcloud mobile apps found by testing them against 1.0.0, media streaming and
+rclone uploads. Upgrading applies two database migrations; going back to 1.0.0 afterwards needs
+the database backup that the install script takes before the upgrade (see "Upgrading" in
+`docs/deployment.md`).
+
 ### Added
 
 - Chunked upload accepts chunks named by byte range (`<start>-<end>`, the end inclusive), as
@@ -94,5 +101,6 @@ their tags stay as they are.
 - Documentation: deployment (`docs/deployment.md`), reverse proxies (`docs/reverse-proxy.md`),
   v1 scope and the mobile test checklist.
 
-[Unreleased]: https://github.com/gonolab/gono.cloud/compare/server-v1.0.0...HEAD
+[Unreleased]: https://github.com/gonolab/gono.cloud/compare/server-v1.1.0...HEAD
+[1.1.0]: https://github.com/gonolab/gono.cloud/compare/server-v1.0.0...server-v1.1.0
 [1.0.0]: https://github.com/gonolab/gono.cloud/releases/tag/server-v1.0.0

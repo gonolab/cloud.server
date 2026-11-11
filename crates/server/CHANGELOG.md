@@ -10,6 +10,23 @@ compatible within a major version: released clients keep working with newer serv
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-11-11
+
+Security fix for the direct download links added in 1.1.0. Every installation of 1.1.0 should
+upgrade; there are no database migrations.
+
+### Security
+
+- User files no longer open as part of the site. Direct download links need no credentials and
+  served a file with its own type, so a user could send an administrator a link to an HTML file
+  whose scripts then ran on the server's origin, with the administrator's web session and
+  access to the admin UI. File downloads through WebDAV and direct links are now sent with
+  `Content-Disposition: attachment` (named after the file, not the link's token), and every
+  response of the WebDAV routes and of direct links carries
+  `Content-Security-Policy: default-src 'none'; sandbox` and `X-Content-Type-Options: nosniff`.
+  1.0.0 had no direct links; its WebDAV downloads lacked these headers too, but reached a
+  browser only with the file owner's app password.
+
 ## [1.1.0] - 2026-11-11
 
 Fixes for the Nextcloud mobile apps found by testing them against 1.0.0, media streaming and
@@ -101,6 +118,7 @@ their tags stay as they are.
 - Documentation: deployment (`docs/deployment.md`), reverse proxies (`docs/reverse-proxy.md`),
   v1 scope and the mobile test checklist.
 
-[Unreleased]: https://github.com/gonolab/gono.cloud/compare/server-v1.1.0...HEAD
+[Unreleased]: https://github.com/gonolab/gono.cloud/compare/server-v1.1.1...HEAD
+[1.1.1]: https://github.com/gonolab/gono.cloud/compare/server-v1.1.0...server-v1.1.1
 [1.1.0]: https://github.com/gonolab/gono.cloud/compare/server-v1.0.0...server-v1.1.0
 [1.0.0]: https://github.com/gonolab/gono.cloud/releases/tag/server-v1.0.0

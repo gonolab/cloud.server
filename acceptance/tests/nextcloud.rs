@@ -296,6 +296,20 @@ async fn direct_links_stream_files_without_credentials() {
                 .await;
         ranged.expect(&[206]);
         assert_eq!(ranged.body, b"123");
+        // Anyone can open the link, so it must not show a user's file as part of the site.
+        assert_eq!(
+            ranged.header("content-disposition").as_deref(),
+            Some("attachment; filename*=UTF-8''clip.mp4"),
+            "{}",
+            ranged.describe()
+        );
+        assert!(
+            ranged
+                .header("content-security-policy")
+                .is_some_and(|csp| csp.contains("sandbox")),
+            "{}",
+            ranged.describe()
+        );
     }
 
     let folder = direct_link(

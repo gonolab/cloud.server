@@ -27,7 +27,10 @@
 //! `OC-FileId` and `X-NC-Permissions` headers, and [`DavPrefixLayer`], which writes the `DAV:`
 //! prefix of XML bodies as `d:` (the Nextcloud iOS app finds no entries otherwise) and leaves
 //! `@`, `:`, `(` and `)` unencoded in hrefs (Nextcloud Android cannot list the folders of a user
-//! whose name contains `@` otherwise). Every request is logged once with secrets removed from its
+//! whose name contains `@` otherwise). Every response of the WebDAV routes and of direct links
+//! carries a sandboxing `Content-Security-Policy` and `X-Content-Type-Options: nosniff`
+//! ([`sandbox_user_content`]), and file contents are sent as attachments, so that user files
+//! never run as part of the site. Every request is logged once with secrets removed from its
 //! target ([`crate::request_log`]).
 
 use std::{net::SocketAddr, sync::Arc, time::Duration};
@@ -107,6 +110,31 @@ impl Predicate for DavXmlOnly {
     }
 }
 
+/// `Content-Security-Policy` of every response that can carry user files: no resource may load
+/// and the document gets a unique origin, without scripts, forms or plugins.
+const USER_CONTENT_CSP: &str = "default-src 'none'; sandbox";
+
+/// Adds [`USER_CONTENT_CSP`] and `X-Content-Type-Options: nosniff` to a response of the
+/// WebDAV routes or a direct link.
+///
+/// The web login and the admin UI share the server's origin and keep their sessions in cookies
+/// for the whole origin. A user's HTML or SVG file opened in a browser (a direct link needs no
+/// credentials, so anyone can be sent one) must therefore never run as part of the site. File
+/// contents are already sent as attachments ([`gono_server_dav::DavService`]); this policy also
+/// covers browsers that show them anyway and every other response on these routes.
+async fn sandbox_user_content(mut response: Response) -> Response {
+    let headers = response.headers_mut();
+    headers.insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static(USER_CONTENT_CSP),
+    );
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    response
+}
+
 /// Builds the application router.
 pub fn router(state: AppState) -> Router {
     let dav = Router::new()
@@ -120,7 +148,11 @@ pub fn router(state: AppState) -> Router {
         .route("/remote.php/dav/{*rest}", any(dav_namespace))
         .layer(OcHeadersLayer)
         .layer(DavPrefixLayer)
-        .layer(CompressionLayer::new().gzip(true).compress_when(DavXmlOnly));
+        .layer(CompressionLayer::new().gzip(true).compress_when(DavXmlOnly))
+        .layer(middleware::map_response(sandbox_user_content));
+    let direct = Router::new()
+        .route("/remote.php/direct/{token}", get(direct::download))
+        .layer(middleware::map_response(sandbox_user_content));
     let nextcloud = Router::new()
         .route("/status.php", get(nextcloud::status_php))
         .route("/index.php/204", get(nextcloud::connectivity))
@@ -142,10 +174,10 @@ pub fn router(state: AppState) -> Router {
             get(login_flow::page).post(login_flow::submit),
         );
     let mut router = Router::new()
-        .route("/remote.php/direct/{token}", get(direct::download))
         .route("/healthz", get(healthz))
         .merge(nextcloud)
-        .merge(dav);
+        .merge(dav)
+        .merge(direct);
     if state.push.is_some() {
         router = router
             .route(WEBSOCKET_PATH, get(notify_push::websocket))
@@ -1104,6 +1136,78 @@ mod tests {
             )
             .await;
         assert_eq!(lock.status, StatusCode::FORBIDDEN);
+    }
+
+    /// A user's HTML must never run as part of the site, where the admin UI and the web login
+    /// keep their sessions: file contents are attachments, and every response of the WebDAV
+    /// routes and of direct links (which need no credentials) is sandboxed.
+    #[tokio::test]
+    async fn user_files_are_sandboxed_attachments() {
+        let f = fixture().await;
+        let page = "<html><script>document.title = 'x'</script></html>";
+        let file = format!("{FILES}/%C3%9Cber%20page.html");
+        let put = f.send("PUT", &file, Some(&f.full), &[], page).await;
+        assert_eq!(put.status, StatusCode::CREATED);
+        let sandboxed = |reply: &Reply, what: &str| {
+            assert_eq!(
+                reply.header("content-security-policy"),
+                "default-src 'none'; sandbox",
+                "{what}"
+            );
+            assert_eq!(reply.header("x-content-type-options"), "nosniff", "{what}");
+        };
+        let attachment = "attachment; filename*=UTF-8''%C3%9Cber%20page.html";
+
+        for method in ["GET", "HEAD"] {
+            let reply = f.send(method, &file, Some(&f.full), &[], "").await;
+            assert_eq!(reply.status, StatusCode::OK, "{method}");
+            sandboxed(&reply, method);
+            assert_eq!(reply.header("content-disposition"), attachment, "{method}");
+        }
+        let ranged = f
+            .send("GET", &file, Some(&f.full), &[("Range", "bytes=0-5")], "")
+            .await;
+        assert_eq!(ranged.status, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(ranged.header("content-disposition"), attachment);
+
+        // Folders, listings and refusals are no downloads, but sandboxed all the same.
+        let folder = f
+            .send("GET", &format!("{FILES}/"), Some(&f.full), &[], "")
+            .await;
+        assert_eq!(folder.status, StatusCode::OK);
+        sandboxed(&folder, "folder");
+        assert!(folder.headers.get("content-disposition").is_none());
+        let listing = f
+            .send("PROPFIND", FILES, Some(&f.full), &[("Depth", "1")], "")
+            .await;
+        assert_eq!(listing.status, StatusCode::MULTI_STATUS);
+        sandboxed(&listing, "PROPFIND");
+        assert!(listing.headers.get("content-disposition").is_none());
+        let anonymous = f.send("GET", &file, None, &[], "").await;
+        assert_eq!(anonymous.status, StatusCode::UNAUTHORIZED);
+        sandboxed(&anonymous, "401");
+
+        // A direct link names the file, not its token.
+        let id: i64 =
+            sqlx::query_scalar("SELECT id FROM files WHERE rel_path LIKE '%ber page.html'")
+                .fetch_one(&f.state.db)
+                .await
+                .unwrap();
+        let link = link_path(&direct_link(&f, &f.full, &format!("fileId={id}")).await);
+        let direct = f.send("GET", &link, None, &[], "").await;
+        assert_eq!(direct.status, StatusCode::OK);
+        assert_eq!(direct.body, page);
+        sandboxed(&direct, "direct link");
+        assert_eq!(direct.header("content-disposition"), attachment);
+        let unknown = f
+            .send("GET", "/remote.php/direct/not-a-token", None, &[], "")
+            .await;
+        assert_eq!(unknown.status, StatusCode::NOT_FOUND);
+        sandboxed(&unknown, "unknown link");
+
+        // Other routes keep their own headers: the status document is not sandboxed.
+        let status = f.send("GET", "/status.php", None, &[], "").await;
+        assert!(status.headers.get("content-security-policy").is_none());
     }
 
     async fn direct_link(f: &Fixture, password: &str, form: &str) -> Reply {

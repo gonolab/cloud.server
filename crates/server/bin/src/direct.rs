@@ -10,7 +10,9 @@
 //! - `GET`/`HEAD /remote.php/direct/<token>`, without credentials: the file, through the same
 //!   WebDAV `GET` as `/remote.php/dav/files/...` with the link's app password, so ranges,
 //!   ETags and conditional requests behave the same. Only the range and condition headers of
-//!   the request are passed on.
+//!   the request are passed on. Like every WebDAV download, the file is an attachment named
+//!   after the file (not the token) and the response is sandboxed (see [`crate::app`]): a link
+//!   to an HTML file must not run a page on the server's origin for whoever opens it.
 //!
 //! Every way a link can fail (unknown, expired, revoked app password, disabled account,
 //! deleted file, file outside the mounts) answers a plain 404. The token is part of the path,

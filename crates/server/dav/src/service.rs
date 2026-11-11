@@ -22,9 +22,10 @@
 //! Everything else is handled by dav-server through `handle_guarded`. Afterwards the entry the
 //! request produced or read (PUT, MKCOL, MOVE, COPY, GET, HEAD) is attached to the response as
 //! an [`OcInfo`] extension, from which [`crate::oc_headers::OcHeadersLayer`] adds the
-//! `OC-ETag`, `OC-FileId` and `X-NC-Permissions` headers.
+//! `OC-ETag`, `OC-FileId` and `X-NC-Permissions` headers. File contents (`GET`/`HEAD` of a
+//! file) are sent with `Content-Disposition: attachment` (see [`attachment`]).
 
-use std::{io, sync::Arc};
+use std::{fmt::Write as _, io, sync::Arc};
 
 use bytes::Bytes;
 use dav_server::{DavHandler, davpath::DavPath, fs::FsError};
@@ -109,6 +110,30 @@ pub(crate) fn xml_body(status: StatusCode, body: String) -> Response<DavBody> {
         HeaderValue::from_static("application/xml; charset=utf-8"),
     );
     response
+}
+
+/// The `Content-Disposition` of file contents: `attachment`, with `name` (the last path
+/// segment, decoded) as an RFC 8187 `filename*` when there is one.
+///
+/// Browsers then save a file instead of showing it, so that a user's HTML or SVG never runs on
+/// the server's origin, where the web login and the admin UI keep their sessions. Direct
+/// download links need no credentials, so without this anyone could send an administrator a
+/// link that runs a page as part of the site. The router adds a sandboxing
+/// `Content-Security-Policy` to the same responses as a second line of defense.
+fn attachment(name: &[u8]) -> HeaderValue {
+    if name.is_empty() {
+        return HeaderValue::from_static("attachment");
+    }
+    let mut value = String::from("attachment; filename*=UTF-8''");
+    for &byte in name {
+        // RFC 8187 attr-char; everything else is percent-encoded.
+        if byte.is_ascii_alphanumeric() || b"!#$&+-.^_`|~".contains(&byte) {
+            value.push(char::from(byte));
+        } else {
+            let _ = write!(value, "%{byte:02X}");
+        }
+    }
+    HeaderValue::from_str(&value).unwrap_or_else(|_| HeaderValue::from_static("attachment"))
 }
 
 /// Rewrites `X-OC-MTime` and `X-OC-CTime` values with a fraction (`1700000000.25`, as
@@ -294,6 +319,16 @@ impl DavService {
             parts
                 .extensions
                 .insert(self.oc_info(&entry, mtime_accepted));
+            if matches!(method, Method::GET | Method::HEAD) && !entry.is_dir() {
+                let name = ctx
+                    .request()
+                    .path
+                    .as_ref()
+                    .map_or(&b""[..], |path| path.file_name_bytes());
+                parts
+                    .headers
+                    .insert(header::CONTENT_DISPOSITION, attachment(name));
+            }
         }
         Response::from_parts(parts, CtxBody::new(ctx, body).boxed_unsync())
     }
@@ -388,6 +423,27 @@ mod tests {
         ] {
             assert!(!path_is_clean(dirty), "{dirty}");
         }
+    }
+
+    #[test]
+    fn file_contents_are_attachments_named_by_rfc_8187() {
+        let value = |name: &[u8]| attachment(name).to_str().unwrap().to_owned();
+        assert_eq!(value(b""), "attachment");
+        assert_eq!(
+            value(b"clip-1_final.v2.mp4"),
+            "attachment; filename*=UTF-8''clip-1_final.v2.mp4"
+        );
+        assert_eq!(
+            value("Über page (1).html".as_bytes()),
+            "attachment; filename*=UTF-8''%C3%9Cber%20page%20%281%29.html"
+        );
+        // Quotes, separators and control characters never reach the header unencoded.
+        assert_eq!(
+            value(b"a\"b;c\r\n.svg"),
+            "attachment; filename*=UTF-8''a%22b%3Bc%0D%0A.svg"
+        );
+        // Names that are not UTF-8 are percent-encoded byte by byte.
+        assert_eq!(value(b"\xff.txt"), "attachment; filename*=UTF-8''%FF.txt");
     }
 
     #[test]

@@ -350,6 +350,38 @@ async fn head_returns_metadata_without_body() {
     dav.head(&ctx.path("missing.txt")).await.expect(&[404]);
 }
 
+/// The web login and the admin UI share the server's origin, so a user's HTML must never run
+/// there: file contents are attachments, and the responses are sandboxed.
+#[tokio::test]
+async fn downloads_are_sandboxed_attachments() {
+    let Some(ctx) = Ctx::new().await else { return };
+    let dav = ctx.dav();
+    let rel = ctx.path("page.html");
+    dav.write(&rel, "<html><script>document.title = 'x'</script></html>")
+        .await;
+    let response = dav.get(&rel).await;
+    response.expect(&[200]);
+    assert_eq!(
+        response.header("content-disposition").as_deref(),
+        Some("attachment; filename*=UTF-8''page.html"),
+        "{}",
+        response.describe()
+    );
+    assert!(
+        response
+            .header("content-security-policy")
+            .is_some_and(|csp| csp.contains("sandbox")),
+        "{}",
+        response.describe()
+    );
+    assert_eq!(
+        response.header("x-content-type-options").as_deref(),
+        Some("nosniff"),
+        "{}",
+        response.describe()
+    );
+}
+
 #[tokio::test]
 async fn get_on_missing_resource_is_404() {
     let Some(ctx) = Ctx::new().await else { return };

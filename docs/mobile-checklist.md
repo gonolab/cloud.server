@@ -83,7 +83,7 @@ Add the account again (1.1–1.5) for the following sections.
 |---|---|---|
 | 4.1 | Open a text file, a photo and the large file. | They open with the right content. |
 | 4.2 | Make a file available offline, change it on another device, refresh. (Android 35 has no offline switch for files, only "Sync" for folders; there, download the file, change it and open it again.) | The app downloads the new version. |
-| 4.3 | Play the MP4 and the MP3 without downloading them first; seek in the video. | They play while streaming, and seeking works: the server log shows `POST .../apps/dav/api/v1/direct` (200) and `GET /remote.php/direct/<redacted>` (206 for ranges). iOS 35.2.2 streams only video: it downloads audio with a WebDAV `GET` (200) before playing it, and also when a media file next to it in the folder is opened. |
+| 4.3 | Play the MP4 and the MP3 without downloading them first; seek in the video. (Android keeps played media in its player cache; clear the app's cache before a retest.) | They play while streaming, and seeking works: the server log shows `POST .../apps/dav/api/v1/direct` (200) and `GET /remote.php/direct/<redacted>` (206 for ranges). iOS 35.2.2 streams only video: it downloads audio with a WebDAV `GET` (200) before playing it, and also when a media file next to it in the folder is opened. |
 | 4.4 | iOS: make a folder with files and a subfolder available offline, then go offline and open the files. | The files directly in the folder were downloaded (as on Nextcloud, the app's `Depth: infinity` listing returns one level). |
 
 ## 5. Favorites
@@ -185,3 +185,32 @@ overwrite and serves the new content; it answers 404 once the file is deleted, a
 password that made it is revoked (its rows are gone). The server's log showed every direct link
 as `<redacted>`. nginx's own access log, however, records the full URL with the token, as it
 does for Login Flow tokens.
+
+### 2026-11-11, server 1.1.1 (`main` at 7ffee03)
+
+Retest of 4.3 after `aa2d425`, which sends file contents as attachments and adds
+`Content-Security-Policy: default-src 'none'; sandbox` and `X-Content-Type-Options: nosniff` to
+every response of the WebDAV routes and of direct links. Server: `gono-cloud` 1.1.1, packaged
+with `package.sh` for x86_64 Linux and installed with `cloud.server.sh --archive` over the test
+server above (data and accounts kept, no new migrations). Devices as in the entry above; the
+Android phone was not tested.
+
+| Item | Android 35.0.2 (emulator) | iOS 35.2.2 (simulator) |
+|---|---|---|
+| 4.3 MP4 | Pass: `POST .../apps/dav/api/v1/direct` 200, `GET /remote.php/direct/<redacted>` 200 and 206; plays; seeking works | Pass: `POST .../direct` 200, then five `GET /remote.php/direct/<redacted>` 206; plays; seeking works |
+| 4.3 MP3 | Pass: `POST .../direct` 200, `GET /remote.php/direct/<redacted>` 200; plays; seeking works | Not retested (the app downloads audio over WebDAV, see above) |
+
+The first Android attempt sent no request at all: the app had kept both files in its player
+cache since the previous test.
+
+Headers, checked with `curl` through nginx and directly against the server:
+
+- `GET` and `HEAD` of a file, over WebDAV and over a direct link, with and without `Range`,
+  answer with `Content-Disposition: attachment; filename*=UTF-8''<name>`, the CSP and `nosniff`.
+  A direct link names the file (`%C3%9Cber%20page.html`, `stream-test.mp4`), not its token. An
+  HTML file keeps `Content-Type: text/html`.
+- `PROPFIND` (207), the 401 of an anonymous `PROPFIND` and of `HEAD /remote.php/dav`, and the 404
+  of an unknown token carry the CSP and `nosniff`, without `Content-Disposition`.
+- Ranges on a direct link still answer 206 (`bytes=0-1`, `bytes=-100`, `bytes=10000000-`).
+- nginx, whose site adds only `Strict-Transport-Security`, passes the headers through unchanged:
+  one CSP per response, the same as the server's own.

@@ -10,6 +10,14 @@ compatible within a major version: released clients keep working with newer serv
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-12
+
+A web file UI and account page in the browser, and every page in English or Chinese. There are
+no database migrations. Upgrading turns the web file UI on: configurations written for 1.x have
+no `[files_ui]` section, so `/` now leads to the sign-in page; add `[files_ui]` with
+`enabled = false` to keep it off. The admin UI keeps its setting where the configuration sets
+`enabled` in `[admin]`, as the one written by the 1.x install script does (`enabled = false`).
+
 ### Added
 
 - A web file UI at `/apps/files/` (`/` leads there), on by default (`files_ui.enabled`). Users
@@ -146,7 +154,8 @@ their tags stay as they are.
 - Documentation: deployment (`docs/deployment.md`), reverse proxies (`docs/reverse-proxy.md`),
   v1 scope and the mobile test checklist.
 
-[Unreleased]: https://github.com/gonolab/gono.cloud/compare/server-v1.1.1...HEAD
+[Unreleased]: https://github.com/gonolab/gono.cloud/compare/server-v1.2.0...HEAD
+[1.2.0]: https://github.com/gonolab/gono.cloud/compare/server-v1.1.1...server-v1.2.0
 [1.1.1]: https://github.com/gonolab/gono.cloud/compare/server-v1.1.0...server-v1.1.1
 [1.1.0]: https://github.com/gonolab/gono.cloud/compare/server-v1.0.0...server-v1.1.0
 [1.0.0]: https://github.com/gonolab/gono.cloud/releases/tag/server-v1.0.0

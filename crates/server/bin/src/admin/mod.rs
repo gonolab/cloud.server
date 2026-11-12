@@ -1,4 +1,4 @@
-//! The web admin UI, served under `admin.path` (default `/gono-admin`) when `admin.enabled`.
+//! The web admin UI, served under `admin.path` (default `/apps/manage`) when `admin.enabled`.
 //!
 //! | Request | Page or action |
 //! |---|---|

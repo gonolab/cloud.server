@@ -10,6 +10,14 @@ compatible within a major version: released clients keep working with newer serv
 
 ## [Unreleased]
 
+### Changed
+
+- The web admin UI moves to `/apps/manage/` by default (`admin.path`), next to the web file UI
+  and the account page; `admin.path` may now be `/apps/manage` although `/apps` is otherwise
+  reserved. Configurations that set `path` keep their path: the one written by the install
+  script of 1.0 to 1.2 sets `path = "/gono-admin"`; change it to `"/apps/manage"` or remove the
+  line to move the admin UI, and adjust reverse proxy rules that restrict the old path.
+
 ## [1.2.0] - 2026-11-12
 
 A web file UI and account page in the browser, and every page in English or Chinese. There are

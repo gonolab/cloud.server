@@ -60,7 +60,7 @@ trusted_proxies = ["127.0.0.1", "::1"]
 - **notify_push timing:** the proxy's idle timeout for the WebSocket must be longer than
   `notify_push.ping_interval_secs`. Gono Cloud pings every interval and closes connections that
   do not answer by the next ping, so an idle timeout of at least twice the interval is safe.
-- **Admin UI:** `admin.enabled` (default on) and `admin.path` (default `/gono-admin`). The proxy
+- **Admin UI:** `admin.enabled` (default on) and `admin.path` (default `/apps/manage`). The proxy
   may restrict that path further, for example to a VPN range (examples below).
 - **Web file UI:** `/apps/files/`, the sign-in page `/login` and the account page
   `/apps/account/` (`files_ui.enabled`, default on). Uploads from the page's script send files up
@@ -144,7 +144,7 @@ server {
     }
 
     # Optional: the admin UI only from the office network or a VPN.
-    # location /gono-admin {
+    # location /apps/manage {
     #     allow 10.8.0.0/24;
     #     deny all;
     #     proxy_pass http://gono_cloud;
@@ -188,7 +188,7 @@ cloud.example.com {
 
 	# Optional: the admin UI only from the office network or a VPN.
 	# @admin_outside {
-	# 	path /gono-admin /gono-admin/*
+	# 	path /apps/manage /apps/manage/*
 	# 	not remote_ip 10.8.0.0/24
 	# }
 	# respond @admin_outside 403
@@ -233,7 +233,7 @@ curl -si --http1.1 -o /dev/null -w '%{http_code}\n' \
   --max-time 3 https://cloud.example.com/push/ws
 ```
 
-Then sign in to the admin UI at `https://cloud.example.com/gono-admin/` (when
+Then sign in to the admin UI at `https://cloud.example.com/apps/manage/` (when
 `admin.enabled`): its overview shows the configured public URL, the trusted proxies and the
 number of live push connections. A "Request blocked" page after submitting a form means the
 browser's origin does not match `base_url`.

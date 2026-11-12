@@ -27,7 +27,7 @@ page!(
 /// What every page of the signed-in admin UI shows around its content.
 #[derive(Debug, Clone)]
 pub struct Frame {
-    /// The admin path, for example `/gono-admin`.
+    /// The admin path, for example `/apps/manage`.
     pub prefix: String,
     /// Highlight "Overview" in the navigation.
     pub on_overview: bool,

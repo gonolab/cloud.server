@@ -219,7 +219,7 @@ pub struct AdminConfig {
     /// cannot access it.
     pub enabled: bool,
 
-    /// URL path of the admin UI, for example `/gono-admin`.
+    /// URL path of the admin UI, for example `/apps/manage`.
     pub path: String,
 }
 
@@ -248,10 +248,12 @@ impl Default for FilesUiConfig {
     }
 }
 
-/// Default of `admin.path`.
-pub const DEFAULT_ADMIN_PATH: &str = "/gono-admin";
+/// Default of `admin.path`, next to the web file UI (`/apps/files/`) and the account page
+/// (`/apps/account/`).
+pub const DEFAULT_ADMIN_PATH: &str = "/apps/manage";
 
-/// First path segments the server uses itself; `admin.path` must not start with one of them.
+/// First path segments the server uses itself; `admin.path` must not start with one of them,
+/// except that it may be [`DEFAULT_ADMIN_PATH`].
 const RESERVED_SEGMENTS: &[&str] = &[
     "204",
     "apps",
@@ -265,8 +267,12 @@ const RESERVED_SEGMENTS: &[&str] = &[
 ];
 
 /// `admin.path` is `/` followed by one or more segments of unreserved URL characters, without a
-/// trailing slash, and outside the paths the server serves itself.
+/// trailing slash, and outside the paths the server serves itself. The default lies below
+/// `/apps`, which is otherwise reserved: the server serves nothing else under `/apps/manage`.
 fn check_admin_path(path: &str) -> Result<(), String> {
+    if path == DEFAULT_ADMIN_PATH {
+        return Ok(());
+    }
     let Some(rest) = path.strip_prefix('/') else {
         return Err("must start with '/'".to_owned());
     };
@@ -586,7 +592,7 @@ mod tests {
         assert!(config.notify_push.enabled);
         assert!(config.admin.enabled);
         assert!(config.files_ui.enabled);
-        assert_eq!(config.admin.path, "/gono-admin");
+        assert_eq!(config.admin.path, "/apps/manage");
         assert!(config.warnings().is_empty());
     }
 
@@ -790,7 +796,13 @@ mod tests {
 
     #[test]
     fn admin_path_is_validated() {
-        for good in ["/gono-admin", "/admin", "/ops/admin", "/a.b_c~d"] {
+        for good in [
+            "/apps/manage",
+            "/gono-admin",
+            "/admin",
+            "/ops/admin",
+            "/a.b_c~d",
+        ] {
             let raw = format!("{MINIMAL}\n[admin]\npath = \"{good}\"");
             assert!(issue_keys(&parse(&raw)).is_empty(), "{good}");
         }
@@ -808,6 +820,12 @@ mod tests {
             "/remote.php",
             "/Index.php",
             "/login",
+            // Only the default itself may lie below /apps.
+            "/apps",
+            "/apps/files",
+            "/apps/assets",
+            "/apps/manage/x",
+            "/Apps/manage",
         ] {
             let raw = format!("{MINIMAL}\n[admin]\npath = \"{bad}\"");
             assert_eq!(issue_keys(&parse(&raw)), ["admin.path"], "{bad:?}");

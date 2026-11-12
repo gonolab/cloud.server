@@ -100,9 +100,9 @@ max_connections_per_user = 64
 enabled = true
 
 # URL path of the admin UI. Letters, digits, "-", ".", "_" and "~" only, without a trailing
-# slash; paths the server uses itself (/remote.php, /ocs, /index.php, /push, ...) are refused.
-# Default: "/gono-admin".
-path = "/gono-admin"
+# slash; paths the server uses itself (/remote.php, /ocs, /index.php, /push, /apps, ...) are
+# refused, apart from the default. Default: "/apps/manage".
+path = "/apps/manage"
 
 [files_ui]
 # Serve the web file UI at /apps/files/ (browse, search, preview, upload, download, organize

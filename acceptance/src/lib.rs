@@ -50,7 +50,7 @@ pub struct Config {
     pub scoped_password: Option<String>,
     /// The user's web login password (Login Flow v2, web admin UI).
     pub web_password: Option<String>,
-    /// Web admin UI path, e.g. `/gono-admin`.
+    /// Web admin UI path, e.g. `/apps/manage`.
     pub admin_path: String,
     /// A second, unrelated user with a full-scope device credential.
     pub user2: Option<Cred>,
@@ -92,7 +92,7 @@ impl Config {
                     .expect("GONO_ACCEPT_PUSH_TIMEOUT_SECS must be a number of seconds")
             })
             .unwrap_or(20);
-        let admin_path = env_var("GONO_ACCEPT_ADMIN_PATH").unwrap_or_else(|| "/gono-admin".into());
+        let admin_path = env_var("GONO_ACCEPT_ADMIN_PATH").unwrap_or_else(|| "/apps/manage".into());
         Ok(Config {
             base_url: base_url.trim_end_matches('/').to_owned(),
             full: Cred::new(user, password),

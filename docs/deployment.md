@@ -158,9 +158,11 @@ never opened as web pages: downloads are attachments, and only images, video, au
 previewed. App passwords cannot sign in to the browser, and the browser session cannot be used
 for WebDAV.
 
-The **web admin UI** at `https://cloud.example.com/gono-admin/` (`admin.path`) shows this server
-and manages accounts and app passwords. Only accounts with the admin flag can sign in. Consider
-limiting the path to a VPN or office network in the reverse proxy
+The **web admin UI** at `https://cloud.example.com/apps/manage/` (`admin.path`) shows this server
+and manages accounts and app passwords. Only accounts with the admin flag can sign in; for them,
+the file UI links to it. The configuration written by the install script of 1.0 to 1.2 sets
+`path = "/gono-admin"`, so the admin UI stays there until that line is changed or removed.
+Consider limiting the path to a VPN or office network in the reverse proxy
 ([examples](reverse-proxy.md)).
 
 Both are on by default. To turn one off, set `enabled = false` in the `[files_ui]` or `[admin]`

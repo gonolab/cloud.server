@@ -206,7 +206,6 @@ file = "${LOG_FILE}"
 
 [admin]
 enabled = true
-path = "/gono-admin"
 EOF
 
 WEB_PASSWORD="$(random_password)"
@@ -241,7 +240,7 @@ export GONO_ACCEPT_PASSWORD="${PASSWORD}"
 export GONO_ACCEPT_VIEW_PASSWORD="${VIEW_PASSWORD}"
 export GONO_ACCEPT_SCOPED_PASSWORD="${SCOPED_PASSWORD}"
 export GONO_ACCEPT_WEB_PASSWORD="${WEB_PASSWORD}"
-export GONO_ACCEPT_ADMIN_PATH="/gono-admin"
+export GONO_ACCEPT_ADMIN_PATH="/apps/manage"
 export GONO_ACCEPT_USER2="alice@example.com"
 export GONO_ACCEPT_PASSWORD2="${USER2_PASSWORD}"
 

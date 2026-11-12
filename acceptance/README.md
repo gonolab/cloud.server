@@ -97,7 +97,7 @@ test still reports `ok`; it prints `SKIP <test>: <reason>` to stderr (also visib
 | `GONO_ACCEPT_VIEW_PASSWORD` | no | App password of the same user with `view` permission mounted at `/` (legacy CLI: `app-password-add gono readonly --mount /=/:view`). |
 | `GONO_ACCEPT_SCOPED_PASSWORD` | no | App password of the same user with two mounts: `/acc-view` → `/acc-scope/view` (`view`) and `/acc-full` → `/acc-scope/full` (`full`). The tests create the storage directories when they are missing. |
 | `GONO_ACCEPT_WEB_PASSWORD` | no | The user's web login password, used for Login Flow v2 and the web admin UI. On the legacy server this is the app password. |
-| `GONO_ACCEPT_ADMIN_PATH` | no | Web admin UI path (default `/gono-admin`). The user must be an admin. |
+| `GONO_ACCEPT_ADMIN_PATH` | no | Web admin UI path (default `/apps/manage`). The user must be an admin. |
 | `GONO_ACCEPT_USER2` | no | A second, unrelated, non-admin user. `run-new.sh` names it `alice@example.com`; the href test for names with `@` is skipped for names without one. |
 | `GONO_ACCEPT_PASSWORD2` | no | Full-scope app password of `GONO_ACCEPT_USER2`. |
 | `GONO_ACCEPT_PUSH_TIMEOUT_SECS` | no | How long to wait for a notify_push message (default 20). |

@@ -33,7 +33,7 @@ use crate::{
     web::{self, Web},
 };
 
-const PREFIX: &str = "/gono-admin";
+const PREFIX: &str = "/apps/manage";
 const ROOT_PASSWORD: &str = "root password";
 const ALICE_PASSWORD: &str = "alice password";
 

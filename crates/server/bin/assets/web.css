@@ -39,6 +39,8 @@
   --favorite: #a16207;
   --input-bg: #ffffff;
   --input-border: #98a2b1;
+  /* The border of a focused field (as on the forum): follows the theme's subtle text. */
+  --input-focus: var(--text-subtle);
   --backdrop: rgb(15 23 42 / 48%);
   --selection: #eef2ff;
   --shadow-base: 0 1px 2px rgb(5 0 56 / 0.04);
@@ -299,7 +301,7 @@ svg { flex: none; }
   border-radius: var(--r-pill);
   background: var(--input-bg);
 }
-.masthead__search:focus-within { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.masthead__search:focus-within { border-color: var(--input-focus); }
 .masthead__search .masthead__query {
   flex: 1 1 auto;
   min-inline-size: 0;
@@ -592,9 +594,17 @@ textarea {
   font-size: 15px;
 }
 textarea { padding: 8px 12px; }
-input:focus,
-select:focus,
-textarea:focus { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+/* A focused field darkens its own border instead of drawing an outline; checkboxes and radio
+   buttons get a thin ring of the same colour. */
+:is(input:not([type=checkbox], [type=radio], [type=file], [type=range], [type=color], [type=submit], [type=reset], [type=button], [type=image]), select, textarea):focus-visible {
+  outline: none;
+  border-color: var(--input-focus);
+}
+input:is([type=checkbox], [type=radio]):focus-visible {
+  outline: none;
+  filter: drop-shadow(1px 0 0 var(--input-focus)) drop-shadow(-1px 0 0 var(--input-focus))
+    drop-shadow(0 1px 0 var(--input-focus)) drop-shadow(0 -1px 0 var(--input-focus));
+}
 input.mono-input { font-family: var(--font-mono); font-size: 14px; }
 input[type=checkbox],
 input[type=radio] { accent-color: var(--accent); }

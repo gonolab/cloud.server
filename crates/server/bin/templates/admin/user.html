@@ -1,7 +1,7 @@
 {%- extends "admin/frame.html" -%}
 {%- block title %}{{ user.username }}{% endblock -%}
 {%- block content %}
-<div class="crumbs"><a href="{{ frame.prefix }}/users">Users</a> / {{ user.username }}</div>
+<div class="crumbs"><a href="{{ frame.prefix }}/users">{{ chrome.t.a_users }}</a> / {{ user.username }}</div>
 {%- if let Some(notice) = notice %}
 <div class="flash ok" role="status">{{ notice }}</div>
 {%- endif %}
@@ -10,20 +10,20 @@
 {%- endif %}
 <div class="page-head">
   <div><h1>{{ user.display_name }}</h1>
-    <p class="sub"><span class="mono">{{ user.username }}</span> &nbsp;{% if user.is_admin %}<span class="badge">Admin</span>{% else %}<span class="badge off">User</span>{% endif %} {% if user.enabled %}<span class="badge ok dot">Enabled</span>{% else %}<span class="badge off dot">Disabled</span>{% endif %}</p></div>
+    <p class="sub"><span class="mono">{{ user.username }}</span> &nbsp;{% if user.is_admin %}<span class="badge">{{ chrome.t.a_admin_badge }}</span>{% else %}<span class="badge off">{{ chrome.t.a_user_badge }}</span>{% endif %} {% if user.enabled %}<span class="badge ok dot">{{ chrome.t.a_enabled }}</span>{% else %}<span class="badge off dot">{{ chrome.t.a_disabled }}</span>{% endif %}</p></div>
   <div class="head-actions">
     {%- if is_self %}
-    <span class="muted small">This is your account.</span>
+    <span class="muted small">{{ chrome.t.a_this_is_you }}</span>
     {%- else %}
     {%- if user.is_admin %}
-    <form method="post" action="{{ base }}/demote"><input type="hidden" name="csrf" value="{{ frame.csrf }}"><button class="btn" type="submit">Remove admin</button></form>
+    <form method="post" action="{{ base }}/demote"><input type="hidden" name="csrf" value="{{ frame.csrf }}"><button class="btn" type="submit">{{ chrome.t.a_remove_admin }}</button></form>
     {%- else %}
-    <form method="post" action="{{ base }}/promote"><input type="hidden" name="csrf" value="{{ frame.csrf }}"><button class="btn" type="submit">Make admin</button></form>
+    <form method="post" action="{{ base }}/promote"><input type="hidden" name="csrf" value="{{ frame.csrf }}"><button class="btn" type="submit">{{ chrome.t.a_make_admin }}</button></form>
     {%- endif %}
     {%- if user.enabled %}
-    <form method="post" action="{{ base }}/disable"><input type="hidden" name="csrf" value="{{ frame.csrf }}"><button class="btn" type="submit">Disable account</button></form>
+    <form method="post" action="{{ base }}/disable"><input type="hidden" name="csrf" value="{{ frame.csrf }}"><button class="btn" type="submit">{{ chrome.t.a_disable }}</button></form>
     {%- else %}
-    <form method="post" action="{{ base }}/enable"><input type="hidden" name="csrf" value="{{ frame.csrf }}"><button class="btn primary" type="submit">Enable account</button></form>
+    <form method="post" action="{{ base }}/enable"><input type="hidden" name="csrf" value="{{ frame.csrf }}"><button class="btn primary" type="submit">{{ chrome.t.a_enable }}</button></form>
     {%- endif %}
     {%- endif %}
   </div>
@@ -31,85 +31,85 @@
 <div class="grid">
   <div class="stack">
     <div class="panel">
-      <div class="panel-head"><div><h2>App passwords</h2><p class="muted small">One per device. Revoking signs that device out at once.</p></div></div>
+      <div class="panel-head"><div><h2>{{ chrome.t.a_app_passwords }}</h2><p class="muted small">{{ chrome.t.a_devices_note }}</p></div></div>
       {%- if app_passwords.is_empty() %}
-      <div class="empty">No app passwords yet. Devices get one through Login Flow, or create one below.</div>
+      <div class="empty">{{ chrome.t.a_no_app_passwords }}</div>
       {%- else %}
       <div class="table-wrap"><table>
-        <thead><tr><th>Label</th><th>Access</th><th>Last used</th><th class="end"></th></tr></thead>
+        <thead><tr><th>{{ chrome.t.label }}</th><th>{{ chrome.t.access }}</th><th>{{ chrome.t.last_used }}</th><th class="end"></th></tr></thead>
         <tbody>
         {%- for password in app_passwords %}
-          <tr><td><b>{{ password.label }}</b><div class="muted small nowrap">Created {{ password.created }}</div></td>
+          <tr><td><b>{{ password.label }}</b><div class="muted small nowrap">{{ password.created }}</div></td>
             <td><div class="chips">{% for scope in password.scopes %}<span class="chip">{{ scope.mount }} → {{ scope.storage }} <span class="perm">{{ scope.permission }}</span></span>{% endfor %}</div></td>
             <td class="num">{{ password.last_used }}<div class="muted small">{{ password.expiry }}</div></td>
-            <td class="end"><form method="post" action="{{ base }}/app-passwords/{{ password.id }}/delete"><input type="hidden" name="csrf" value="{{ frame.csrf }}"><button class="btn danger sm" type="submit">Revoke</button></form></td></tr>
+            <td class="end"><form method="post" action="{{ base }}/app-passwords/{{ password.id }}/delete"><input type="hidden" name="csrf" value="{{ frame.csrf }}"><button class="btn danger sm" type="submit">{{ chrome.t.revoke }}</button></form></td></tr>
         {%- endfor %}
         </tbody>
       </table></div>
       {%- endif %}
     </div>
     <div class="panel">
-      <div class="panel-head"><div><h2>New app password</h2><p class="muted small">Shown once after it is created.</p></div></div>
+      <div class="panel-head"><div><h2>{{ chrome.t.new_app_password }}</h2><p class="muted small">{{ chrome.t.a_shown_once }}</p></div></div>
       <div class="panel-body">
         <form method="post" action="{{ base }}/app-passwords">
           <input type="hidden" name="csrf" value="{{ frame.csrf }}">
           <div class="row">
-            <label class="field" for="ap-label"><span>Label</span><input id="ap-label" type="text" name="label" value="{{ form.label }}" required placeholder="Work laptop"></label>
-            <label class="field" for="ap-expires"><span>Expires after (days)</span><input id="ap-expires" type="number" name="expires_in_days" value="{{ form.expires_in_days }}" min="1" max="3650" placeholder="Never"></label>
+            <label class="field" for="ap-label"><span>{{ chrome.t.label }}</span><input id="ap-label" type="text" name="label" value="{{ form.label }}" required placeholder="{{ chrome.t.a_label_example }}"></label>
+            <label class="field" for="ap-expires"><span>{{ chrome.t.expires_after }}</span><input id="ap-expires" type="number" name="expires_in_days" value="{{ form.expires_in_days }}" min="1" max="3650" placeholder="{{ chrome.t.never }}"></label>
           </div>
-          <fieldset class="scope"><legend>Access</legend>
+          <fieldset class="scope"><legend>{{ chrome.t.access }}</legend>
             <div class="choices">
-              <label class="choice" for="scope-full"><input id="scope-full" type="radio" name="access" value="full"{% if form.access == "full" %} checked{% endif %}><span><b>All files, read and write</b><span>Mounts <code>/</code> with full access.</span></span></label>
-              <label class="choice" for="scope-view"><input id="scope-view" type="radio" name="access" value="view"{% if form.access == "view" %} checked{% endif %}><span><b>All files, read only</b><span>Mounts <code>/</code> with view access.</span></span></label>
-              <label class="choice" for="scope-custom"><input id="scope-custom" type="radio" name="access" value="custom"{% if form.access == "custom" %} checked{% endif %}><span><b>Selected folders</b><span>Up to three mounts; empty rows are ignored.</span></span></label>
+              <label class="choice" for="scope-full"><input id="scope-full" type="radio" name="access" value="full"{% if form.access == "full" %} checked{% endif %}><span><b>{{ chrome.t.access_full }}</b><span>{{ chrome.t.access_full_note }}</span></span></label>
+              <label class="choice" for="scope-view"><input id="scope-view" type="radio" name="access" value="view"{% if form.access == "view" %} checked{% endif %}><span><b>{{ chrome.t.access_view }}</b><span>{{ chrome.t.access_view_note }}</span></span></label>
+              <label class="choice" for="scope-custom"><input id="scope-custom" type="radio" name="access" value="custom"{% if form.access == "custom" %} checked{% endif %}><span><b>{{ chrome.t.access_custom }}</b><span>{{ chrome.t.access_custom_note }}</span></span></label>
             </div>
             <div class="mounts">
-              <div class="mount-head"><span>Shown to the device as</span><span>Folder in the user's files</span><span>Access</span></div>
+              <div class="mount-head"><span>{{ chrome.t.mount_as }}</span><span>{{ chrome.t.a_mount_folder }}</span><span>{{ chrome.t.access }}</span></div>
               {%- for mount in form.mounts %}
               <div class="mount-row">
-                <input id="mount-{{ loop.index }}" class="mono-input" type="text" name="mount_{{ loop.index }}" value="{{ mount.mount }}" placeholder="/Photos" aria-label="Mount path {{ loop.index }}">
-                <input id="storage-{{ loop.index }}" class="mono-input" type="text" name="storage_{{ loop.index }}" value="{{ mount.storage }}" placeholder="/Media/Photos" aria-label="Storage path {{ loop.index }}">
-                <select id="perm-{{ loop.index }}" name="perm_{{ loop.index }}" aria-label="Access {{ loop.index }}"><option value="view"{% if mount.permission != "full" %} selected{% endif %}>view</option><option value="full"{% if mount.permission == "full" %} selected{% endif %}>full</option></select>
+                <input id="mount-{{ loop.index }}" class="mono-input" type="text" name="mount_{{ loop.index }}" value="{{ mount.mount }}" placeholder="/Photos" aria-label="{{ chrome.t.mount_as }} {{ loop.index }}">
+                <input id="storage-{{ loop.index }}" class="mono-input" type="text" name="storage_{{ loop.index }}" value="{{ mount.storage }}" placeholder="/Media/Photos" aria-label="{{ chrome.t.a_mount_folder }} {{ loop.index }}">
+                <select id="perm-{{ loop.index }}" name="perm_{{ loop.index }}" aria-label="{{ chrome.t.access }} {{ loop.index }}"><option value="view"{% if mount.permission != "full" %} selected{% endif %}>view</option><option value="full"{% if mount.permission == "full" %} selected{% endif %}>full</option></select>
               </div>
               {%- endfor %}
             </div>
           </fieldset>
-          <button class="btn primary" type="submit">Create app password</button>
+          <button class="btn primary" type="submit">{{ chrome.t.create_app_password }}</button>
         </form>
       </div>
     </div>
   </div>
   <div class="stack">
     <div class="panel"><div class="panel-body">
-      <h2>Account</h2>
-      <dl class="facts mt-18"><dt>User id</dt><dd class="mono">{{ user.id }}</dd><dt>Created</dt><dd>{{ user.created }}</dd><dt>Changed</dt><dd>{{ user.updated }}</dd><dt>Storage used</dt><dd>{{ user.storage }}</dd></dl>
+      <h2>{{ chrome.t.a_account }}</h2>
+      <dl class="facts mt-18"><dt>{{ chrome.t.a_user_id }}</dt><dd class="mono">{{ user.id }}</dd><dt>{{ chrome.t.a_created }}</dt><dd>{{ user.created }}</dd><dt>{{ chrome.t.a_changed }}</dt><dd>{{ user.updated }}</dd><dt>{{ chrome.t.a_storage_used }}</dt><dd>{{ user.storage }}</dd></dl>
     </div></div>
     <div class="panel"><div class="panel-body">
-      <h2>Display name</h2>
-      <p class="muted small">The name clients show for this account.</p>
+      <h2>{{ chrome.t.display_name }}</h2>
+      <p class="muted small">{{ chrome.t.a_display_name_note }}</p>
       <form method="post" action="{{ base }}/display-name">
         <input type="hidden" name="csrf" value="{{ frame.csrf }}">
-        <label class="field" for="dn-name"><span>Display name</span><input id="dn-name" type="text" name="display_name" value="{{ user.display_name }}" required></label>
-        <button class="btn block" type="submit">Change display name</button>
+        <label class="field" for="dn-name"><span>{{ chrome.t.display_name }}</span><input id="dn-name" type="text" name="display_name" value="{{ user.display_name }}" required></label>
+        <button class="btn block" type="submit">{{ chrome.t.a_change_display_name }}</button>
       </form>
     </div></div>
     <div class="panel"><div class="panel-body">
-      <h2>Web login password</h2>
-      <p class="muted small">Used for Login Flow and this admin UI. Setting it signs the user out of open browser sessions.</p>
+      <h2>{{ chrome.t.web_password }}</h2>
+      <p class="muted small">{{ chrome.t.a_password_note }}</p>
       <form method="post" action="{{ base }}/password">
         <input type="hidden" name="csrf" value="{{ frame.csrf }}">
-        <label class="field" for="pw-new"><span>New password</span><input id="pw-new" type="password" name="password" autocomplete="new-password" required minlength="8"></label>
-        <label class="field" for="pw-repeat"><span>Repeat</span><input id="pw-repeat" type="password" name="password_repeat" autocomplete="new-password" required minlength="8"></label>
-        <button class="btn block" type="submit">Set password</button>
+        <label class="field" for="pw-new"><span>{{ chrome.t.new_password }}</span><input id="pw-new" type="password" name="password" autocomplete="new-password" required minlength="8"></label>
+        <label class="field" for="pw-repeat"><span>{{ chrome.t.a_repeat }}</span><input id="pw-repeat" type="password" name="password_repeat" autocomplete="new-password" required minlength="8"></label>
+        <button class="btn block" type="submit">{{ chrome.t.a_set_password }}</button>
       </form>
     </div></div>
     <div class="panel danger"><div class="panel-body">
-      <h2>Delete user</h2>
-      <p class="muted small">Removes the account, its app passwords and metadata. Files are moved to <code>deleted/</code>, not erased.</p>
+      <h2>{{ chrome.t.a_delete_user }}</h2>
+      <p class="muted small">{{ chrome.t.a_delete_user_note }}</p>
       {%- if is_self %}
-      <p class="muted small">You cannot delete the account you are signed in with.</p>
+      <p class="muted small">{{ chrome.t.a_cannot_delete_self }}</p>
       {%- else %}
-      <a class="btn danger block" href="{{ base }}/delete">Delete {{ user.username }}…</a>
+      <a class="btn danger block" href="{{ base }}/delete">{{ delete_label }}</a>
       {%- endif %}
     </div></div>
   </div>

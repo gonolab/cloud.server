@@ -795,7 +795,10 @@ async fn display_names_are_changed_and_validated() {
             )
             .await;
         assert_eq!(reply.status, StatusCode::UNPROCESSABLE_ENTITY, "{bad:?}");
-        assert!(reply.body.contains("invalid display name"), "{bad:?}");
+        assert!(
+            reply.body.contains("The display name must not be empty"),
+            "{bad:?}"
+        );
     }
     assert_eq!(
         users::get(&f.state.db, &alice).await.unwrap().display_name,
@@ -929,4 +932,31 @@ async fn the_admin_ui_is_not_served_when_disabled() {
         browser.get(&path("/login")).await.status,
         StatusCode::NOT_FOUND
     );
+}
+
+#[tokio::test]
+async fn pages_follow_the_browser_language() {
+    let f = fixture().await;
+    let mut browser = Browser::new(&f.state);
+    browser.root().await;
+    let zh = [("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")];
+    let overview = browser.send("GET", &path("/"), &zh, String::new()).await;
+    assert!(
+        overview.body.contains("<html lang=\"zh-CN\""),
+        "{}",
+        overview.body
+    );
+    for text in ["概览", "管理用户", "实时推送连接", "网页文件界面"] {
+        assert!(overview.body.contains(text), "{text}");
+    }
+    let users = browser
+        .send("GET", &path("/users"), &zh, String::new())
+        .await;
+    assert!(users.body.contains("新建用户") && users.body.contains("个账号"));
+    let alice = browser
+        .send("GET", &path("/users/alice"), &zh, String::new())
+        .await;
+    assert!(alice.body.contains("删除 alice…"), "{}", alice.body);
+    let english = browser.get(&path("/")).await;
+    assert!(english.body.contains("Overview") && !english.body.contains("概览"));
 }

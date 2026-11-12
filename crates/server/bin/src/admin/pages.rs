@@ -8,6 +8,7 @@ use gono_server_core::{app_passwords::Scope, db};
 
 use crate::{
     commands::output::format_time,
+    i18n::{Text, fill},
     web::{Chrome, page},
 };
 
@@ -102,6 +103,10 @@ pub struct OverviewPage {
     pub warnings: Vec<String>,
     pub stats: gono_server_core::stats::Overview,
     pub users_note: String,
+    /// "N used in the last 24 h".
+    pub used_today: String,
+    /// The connected users of the push tile.
+    pub push_note: String,
     pub storage_number: String,
     pub storage_unit: String,
     /// Used and total bytes of the data directory's file system.
@@ -243,6 +248,8 @@ pub struct UserPage {
     pub user: UserView,
     /// The page shows the signed-in admin's own account.
     pub is_self: bool,
+    /// The label of the delete button, with the username.
+    pub delete_label: String,
     pub app_passwords: Vec<AppPasswordRow>,
     pub form: AppPasswordForm,
 }
@@ -269,7 +276,9 @@ pub struct DeletePage {
     pub frame: Frame,
     pub base: String,
     pub username: String,
-    pub app_passwords: i64,
+    pub title: String,
+    /// What deleting removes.
+    pub effect: String,
     pub error: Option<String>,
 }
 
@@ -302,22 +311,6 @@ pub fn split_bytes(bytes: u64) -> (String, &'static str) {
     (text, UNITS[unit])
 }
 
-/// `just now`, `5 min ago`, `3 h ago`, `2 days ago`, or the date for anything older than a
-/// month.
-pub fn ago(now: i64, then: i64) -> String {
-    let seconds = (now - then).max(0);
-    match seconds {
-        0..60 => "just now".to_owned(),
-        60..3600 => format!("{} min ago", seconds / 60),
-        3600..86_400 => format!("{} h ago", seconds / 3600),
-        86_400..2_592_000 => {
-            let days = seconds / 86_400;
-            format!("{days} {} ago", if days == 1 { "day" } else { "days" })
-        }
-        _ => date(then),
-    }
-}
-
 /// `YYYY-MM-DD` of UNIX seconds (UTC).
 pub fn date(secs: i64) -> String {
     format_time(secs).chars().take(10).collect()
@@ -328,30 +321,12 @@ pub fn time(secs: i64) -> String {
     format_time(secs)
 }
 
-/// `3 days 4 hours`, `5 hours 2 minutes`, `12 minutes`.
-pub fn duration(seconds: i64) -> String {
-    let seconds = seconds.max(0);
-    let plural = |n: i64, word: &str| format!("{n} {word}{}", if n == 1 { "" } else { "s" });
-    let (days, hours, minutes) = (
-        seconds / 86_400,
-        seconds % 86_400 / 3600,
-        seconds % 3600 / 60,
-    );
-    if days > 0 {
-        format!("{} {}", plural(days, "day"), plural(hours, "hour"))
-    } else if hours > 0 {
-        format!("{} {}", plural(hours, "hour"), plural(minutes, "minute"))
-    } else {
-        plural(minutes, "minute")
-    }
-}
-
 /// The expiry of an app password, as the list shows it.
-pub fn expiry(expires_at: Option<i64>, now: i64) -> String {
+pub fn expiry(t: &Text, expires_at: Option<i64>, now: i64) -> String {
     match expires_at {
-        None => "No expiry".to_owned(),
-        Some(at) if at <= now => format!("Expired {}", date(at)),
-        Some(at) => format!("Expires {}", date(at)),
+        None => t.no_expiry.to_owned(),
+        Some(at) if at <= now => fill(t.expired, &[&date(at)]),
+        Some(at) => fill(t.expires, &[&date(at)]),
     }
 }
 
@@ -377,16 +352,26 @@ mod tests {
     }
 
     #[test]
-    fn times() {
-        assert_eq!(ago(1000, 990), "just now");
-        assert_eq!(ago(10_000, 10_000 - 300), "5 min ago");
-        assert_eq!(ago(100_000, 100_000 - 7200), "2 h ago");
-        assert_eq!(ago(1_000_000, 1_000_000 - 86_400), "1 day ago");
-        assert_eq!(ago(100_000_000, 0), "1970-01-01");
-        assert_eq!(duration(3 * 86_400 + 4 * 3600 + 59), "3 days 4 hours");
-        assert_eq!(duration(3600 + 120), "1 hour 2 minutes");
-        assert_eq!(duration(59), "0 minutes");
-        assert_eq!(expiry(None, 0), "No expiry");
-        assert_eq!(expiry(Some(0), 1), "Expired 1970-01-01");
+    fn times_in_both_languages() {
+        use crate::i18n::{EN, ZH, ago, duration};
+        let t = &EN;
+        assert_eq!(ago(t, 1000, 990, date), "just now");
+        assert_eq!(ago(t, 10_000, 10_000 - 300, date), "5 min ago");
+        assert_eq!(ago(t, 100_000, 100_000 - 7200, date), "2 h ago");
+        assert_eq!(ago(t, 1_000_000, 1_000_000 - 86_400, date), "1 day ago");
+        assert_eq!(
+            ago(t, 1_000_000, 1_000_000 - 3 * 86_400, date),
+            "3 days ago"
+        );
+        assert_eq!(ago(t, 100_000_000, 0, date), "1970-01-01");
+        assert_eq!(duration(t, 3 * 86_400 + 4 * 3600 + 59), "3 days 4 hours");
+        assert_eq!(duration(t, 3600 + 120), "1 hour 2 minutes");
+        assert_eq!(duration(t, 59), "0 minutes");
+        assert_eq!(expiry(t, None, 0), "Does not expire");
+        assert_eq!(expiry(t, Some(0), 1), "Expired 1970-01-01");
+        let t = &ZH;
+        assert_eq!(ago(t, 10_000, 10_000 - 300, date), "5 分钟前");
+        assert_eq!(duration(t, 86_400 + 3600), "1 天 1 小时");
+        assert_eq!(expiry(t, Some(0), 1), "已于 1970-01-01 过期");
     }
 }

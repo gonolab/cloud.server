@@ -24,8 +24,8 @@ compatible within a major version: released clients keep working with newer serv
   chooses.
 - An account page at `/apps/account/`: users change their display name and web login password
   (the other browser sessions end) and create, view and revoke their own app passwords.
-- The browser pages follow the browser's language (English or Chinese; the admin UI stays in
-  English) and offer a light, dark or system theme.
+- Every browser page, the admin UI included, follows the browser's language (English or
+  Chinese) and offers a light, dark or system theme.
 - `/index.php/apps/files/` (Nextcloud's web address, which the apps link to) leads to the web
   file UI.
 

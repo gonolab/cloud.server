@@ -36,7 +36,7 @@ use serde::Deserialize;
 
 use super::{Visitor, blocked, internal, view::when, visitor};
 use crate::{
-    admin::{AppPasswordFields, AppPasswordForm, ScopeChip, parse_app_password},
+    admin::{AppPasswordFields, AppPasswordForm, ScopeChip, core_message, parse_app_password},
     app::AppState,
     client_ip::client_ip,
     i18n::{Text, fill},
@@ -305,7 +305,7 @@ pub async fn set_password(
         Err(response) => return *response,
     };
     let t = visitor.t();
-    let fail = |message: &'static str| {
+    let fail = |message: String| {
         let state = state.clone();
         let visitor = &visitor;
         async move {
@@ -314,16 +314,17 @@ pub async fn set_password(
                 visitor,
                 AppPasswordForm::default(),
                 None,
-                Some(message.to_owned()),
+                Some(message),
             )
             .await
         }
     };
     if form.password != form.password_repeat {
-        return fail(t.err_passwords_differ).await;
+        return fail(t.err_passwords_differ.to_owned()).await;
     }
-    if form.password.chars().count() < 8 {
-        return fail(t.err_password_short).await;
+    let new = SecretString::from(form.password);
+    if let Err(err) = password::check_policy(&new) {
+        return fail(core_message(t, &err)).await;
     }
     let client = client_ip(peer.ip(), &headers, &state.trusted_proxies);
     match state
@@ -336,13 +337,14 @@ pub async fn set_password(
         .await
     {
         Verified::Ok(user) if user.id == visitor.user.user_id => {}
-        Verified::Ok(_) | Verified::Invalid => return fail(t.err_current_password).await,
+        Verified::Ok(_) | Verified::Invalid => {
+            return fail(t.err_current_password.to_owned()).await;
+        }
         Verified::RateLimited(wait) => {
             return web::too_many_attempts(visitor.chrome(Nav::Account), wait);
         }
         Verified::Unavailable => return web::unavailable(visitor.chrome(Nav::Account)),
     }
-    let new = SecretString::from(form.password);
     let hash = match tokio::task::spawn_blocking(move || password::hash(&new)).await {
         Ok(Ok(hash)) => hash,
         Ok(Err(err)) => return internal(&visitor, "password hash", &err),
@@ -381,7 +383,7 @@ pub async fn create_app_password(
         return StatusCode::NOT_FOUND.into_response();
     };
     let form = fields.form();
-    let (label, scopes, expires_at) = match parse_app_password(&form, db::unix_now()) {
+    let (label, scopes, expires_at) = match parse_app_password(visitor.t(), &form, db::unix_now()) {
         Ok(parsed) => parsed,
         Err(error) => return render_page(&state, &visitor, form, None, Some(error)).await,
     };

@@ -78,7 +78,8 @@ use self::pages::{
 use crate::{
     app::AppState,
     client_ip::client_ip,
-    i18n::Lang,
+    i18n::{Text, ago, count, duration, fill},
+    site,
     web::{self, CSRF_COOKIE, Chrome, Nav, SESSION_COOKIE, Verified},
 };
 
@@ -173,9 +174,9 @@ impl Admin {
         }
     }
 
-    /// The frame of an admin page (English only for now).
+    /// The frame of an admin page, in the browser's language.
     fn chrome(&self, state: &AppState, headers: &HeaderMap) -> Chrome {
-        let mut chrome = Chrome::new(headers, Lang::En);
+        let mut chrome = Chrome::for_request(headers);
         chrome.nav = Nav::Admin;
         chrome.files = state.files.is_some();
         chrome.logout = self.url("/logout");
@@ -307,36 +308,39 @@ async fn form_session(
     csrf: &str,
 ) -> Result<Session, Halt> {
     if !state.web.same_origin(headers) {
-        return Err(Box::new(blocked("This form was sent from another site.")));
+        return Err(Box::new(site::blocked(headers, |t| t.from_other_site)));
     }
     let session = session(state, admin, headers).await?;
     if !state.web.check_session_csrf(&session.token, csrf) {
-        return Err(Box::new(blocked(
-            "The form has expired. Go back, reload the page and try again.",
-        )));
+        return Err(Box::new(site::blocked(headers, |t| t.form_expired)));
     }
     Ok(session)
 }
 
-/// The frame of admin pages shown without a session (English, the system theme).
-fn plain_chrome() -> Chrome {
-    Chrome::new(&HeaderMap::new(), Lang::En)
-}
-
-fn blocked(lead: &str) -> Response {
-    web::Message::new(plain_chrome(), "Request blocked", "Request blocked", lead)
-        .respond(StatusCode::FORBIDDEN)
-}
-
-fn internal_error(err: &dyn std::fmt::Display) -> Response {
+/// The error page of a request that failed on the server's side (logged).
+fn internal_error(chrome: &Chrome, err: &dyn std::fmt::Display) -> Response {
     tracing::error!(error = %err, "admin request failed");
-    web::Message::new(
-        plain_chrome(),
-        "Error",
-        "Something went wrong",
-        "The server could not complete the request. The details are in the server log.",
-    )
-    .respond(StatusCode::INTERNAL_SERVER_ERROR)
+    let t = chrome.t;
+    web::Message::new(chrome.clone(), t.error, t.error, t.error_lead)
+        .respond(StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+/// What an admin reads about a failed account change.
+pub(crate) fn core_message(t: &Text, err: &CoreError) -> String {
+    match err {
+        CoreError::InvalidUsername { .. } => t.err_username.to_owned(),
+        CoreError::InvalidDisplayName(_) => t.err_display_name.to_owned(),
+        CoreError::InvalidPassword(reason) if reason.contains("at least") => {
+            t.err_password_short.to_owned()
+        }
+        CoreError::InvalidPassword(_) => t.err_password_policy.to_owned(),
+        CoreError::UserExists(name) => fill(t.err_user_exists, &[name.as_str()]),
+        CoreError::LastAdmin(name) => fill(t.err_last_admin, &[name.as_str()]),
+        CoreError::InvalidLabel(_) => t.err_label_invalid.to_owned(),
+        CoreError::InvalidScopes(detail) => fill(t.err_scopes, &[detail]),
+        CoreError::InvalidPath { path, .. } => fill(t.err_invalid_path, &[path]),
+        other => other.to_string(),
+    }
 }
 
 /// The account named in the URL, or a "not found" page.
@@ -349,17 +353,17 @@ async fn find_user(
     let found = match Username::new(name) {
         Ok(username) => users::find(&state.db, &username)
             .await
-            .map_err(|err| Box::new(internal_error(&err)))?,
+            .map_err(|err| Box::new(internal_error(&session.chrome, &err)))?,
         Err(_) => None,
     };
     found.ok_or_else(|| {
         let page = MessagePage {
             chrome: session.chrome.clone(),
             frame: admin.frame(session, false, true),
-            heading: "No such user".to_owned(),
-            lead: format!("There is no account named {name}."),
+            heading: session.chrome.t.a_no_such_user.to_owned(),
+            lead: fill(session.chrome.t.a_no_such_user_lead, &[name]),
             link_href: admin.url("/users"),
-            link_label: "All users".to_owned(),
+            link_label: session.chrome.t.a_all_users.to_owned(),
         };
         Box::new(web::render(StatusCode::NOT_FOUND, &page))
     })
@@ -444,11 +448,12 @@ async fn login(
         Err(halt) => return *halt,
     };
     if !state.web.same_origin(&headers) {
-        return blocked("This form was sent from another site.");
+        return site::blocked(&headers, |t| t.from_other_site);
     }
+    let t = admin.chrome(&state, &headers).t;
     let user = form.user.trim().to_owned();
     if !state.web.check_login_csrf(&headers, &form.csrf) {
-        let error = "The form has expired. Please sign in again.";
+        let error = t.form_expired_sign_in;
         return login_form(
             &state,
             &admin,
@@ -470,12 +475,12 @@ async fn login(
                     headers.append(header::SET_COOKIE, state.web.removal_cookie(CSRF_COOKIE));
                     response
                 }
-                None => internal_error(&"cannot create a session"),
+                None => web::unavailable(admin.chrome(&state, &headers)),
             }
         }
         Verified::Ok(account) => {
             tracing::info!(%client, user = %account.username, "admin sign-in refused: not an admin");
-            let error = "This account is not an administrator.";
+            let error = t.a_not_admin_error;
             login_form(
                 &state,
                 &admin,
@@ -486,7 +491,7 @@ async fn login(
             )
         }
         Verified::Invalid => {
-            let error = "Wrong username or password.";
+            let error = t.wrong_password;
             login_form(
                 &state,
                 &admin,
@@ -511,12 +516,12 @@ async fn logout(
         Err(halt) => return *halt,
     };
     if !state.web.same_origin(&headers) {
-        return blocked("This form was sent from another site.");
+        return site::blocked(&headers, |t| t.from_other_site);
     }
     // Non-admin sessions may sign out here as well (see `NotAdminPage`).
     if let Some((_, token)) = state.web.session(&headers).await {
         if !state.web.check_session_csrf(&token, &form.csrf) {
-            return blocked("The form has expired. Go back, reload the page and try again.");
+            return site::blocked(&headers, |t| t.form_expired);
         }
         state.web.sign_out(&token).await;
     }
@@ -540,10 +545,11 @@ async fn overview(State(state): State<AppState>, headers: HeaderMap) -> Response
         Ok(session) => session,
         Err(halt) => return *halt,
     };
+    let t = session.chrome.t;
     let now = pages::now();
     let stats = match stats::overview(&state.db, now).await {
         Ok(stats) => stats,
-        Err(err) => return internal_error(&err),
+        Err(err) => return internal_error(&session.chrome, &err),
     };
     let info = &admin.info;
 
@@ -561,19 +567,19 @@ async fn overview(State(state): State<AppState>, headers: HeaderMap) -> Response
 
     let (storage_number, storage_unit) = pages::split_bytes(stats.storage_used);
     let free_of_total = disk.map_or_else(
-        || "unknown".to_owned(),
-        |(free, total)| format!("{} of {}", format_bytes(free), format_bytes(total)),
+        || t.a_unknown.to_owned(),
+        |(free, total)| fill(t.a_free_of, &[&format_bytes(free), &format_bytes(total)]),
     );
     let disk_note = disk.map_or_else(
-        || "Free space unknown".to_owned(),
-        |(free, total)| format!("{} free of {}", format_bytes(free), format_bytes(total)),
+        || t.a_free_unknown.to_owned(),
+        |(free, total)| fill(t.a_free_note, &[&format_bytes(free), &format_bytes(total)]),
     );
     let push_live = state.push.as_ref().map(|hub| hub.connection_stats());
     let endpoints = state.push.as_ref().map(|_| Endpoints::new(&state.base_url));
     let origin = state.base_url.as_str().trim_end_matches('/').to_owned();
-    let uptime = pages::duration(now - info.started_at);
+    let uptime = fill(t.a_up, &[&duration(t, now - info.started_at)]);
     let proxies = if info.trusted_proxies.is_empty() {
-        "none".to_owned()
+        t.a_none.to_owned()
     } else {
         info.trusted_proxies
             .iter()
@@ -583,89 +589,86 @@ async fn overview(State(state): State<AppState>, headers: HeaderMap) -> Response
     };
     let fact = |label: &'static str, value: String, mono: bool| Fact { label, value, mono };
     let server_facts = vec![
-        fact("Version", env!("CARGO_PKG_VERSION").to_owned(), true),
-        fact("Nextcloud protocol", status::version_string(), true),
-        fact("Instance id", info.instance_id.clone(), true),
-        fact("Started", pages::time(info.started_at), false),
-        fact("Public URL", origin.clone(), true),
-        fact("Listening on", info.bind.to_string(), true),
-        fact("Trusted proxies", proxies, true),
+        fact(t.a_fact_version, env!("CARGO_PKG_VERSION").to_owned(), true),
+        fact(t.a_fact_protocol, status::version_string(), true),
+        fact(t.a_fact_instance, info.instance_id.clone(), true),
+        fact(t.a_fact_started, pages::time(info.started_at), false),
+        fact(t.a_fact_public_url, origin.clone(), true),
+        fact(t.a_fact_listening, info.bind.to_string(), true),
+        fact(t.a_fact_proxies, proxies, true),
         fact(
-            "Configuration",
+            t.a_fact_config,
             info.config_path.display().to_string(),
             true,
         ),
-        fact("Log", info.log.clone(), true),
+        fact(t.a_fact_log, info.log.clone(), true),
     ];
     let mut features = Vec::new();
     match &info.push {
         Some(push) => features.push(Feature {
             name: "notify_push",
-            detail: format!(
-                "Ping {} s · debounce {} s · {} per user",
-                push.ping_interval.as_secs(),
-                push.debounce.as_secs(),
-                push.max_connections_per_user
+            detail: fill(
+                t.a_push_detail,
+                &[
+                    &push.ping_interval.as_secs().to_string(),
+                    &push.debounce.as_secs().to_string(),
+                    &push.max_connections_per_user.to_string(),
+                ],
             ),
             on: true,
         }),
         None => features.push(Feature {
             name: "notify_push",
-            detail: "Clients poll for changes".to_owned(),
+            detail: t.a_push_off_detail.to_owned(),
             on: false,
         }),
     }
     features.push(Feature {
         name: "Login Flow v2",
-        detail: format!(
-            "{} {} waiting",
+        detail: count(
+            t.a_flow_waiting_one,
+            t.a_flows_waiting,
             stats.pending_login_flows,
-            if stats.pending_login_flows == 1 {
-                "sign-in"
-            } else {
-                "sign-ins"
-            }
+            &[],
         ),
         on: true,
     });
     features.push(Feature {
-        name: "Chunked upload v2",
-        detail: format!(
-            "Unfinished uploads expire after {} h",
-            gono_server_core::uploads::SESSION_TTL_SECS / 3600
+        name: t.a_chunked,
+        detail: fill(
+            t.a_chunked_detail,
+            &[&(gono_server_core::uploads::SESSION_TTL_SECS / 3600).to_string()],
         ),
         on: true,
     });
     features.push(Feature {
-        name: "WebDAV locks",
-        detail: format!(
-            "At most {} · {} held now",
-            pages::duration(i64::try_from(info.lock_timeout_secs).unwrap_or(i64::MAX)),
-            stats.locks
+        name: t.a_locks,
+        detail: fill(
+            t.a_locks_detail,
+            &[
+                &duration(t, i64::try_from(info.lock_timeout_secs).unwrap_or(i64::MAX)),
+                &stats.locks.to_string(),
+            ],
         ),
         on: true,
     });
     features.push(Feature {
-        name: "Web admin",
-        detail: format!(
-            "{} browser {}",
-            stats.web_sessions,
-            if stats.web_sessions == 1 {
-                "session"
-            } else {
-                "sessions"
-            }
-        ),
+        name: t.a_web_files,
+        detail: if state.files.is_some() {
+            t.a_web_files_detail.to_owned()
+        } else {
+            t.a_web_files_off.to_owned()
+        },
+        on: state.files.is_some(),
+    });
+    features.push(Feature {
+        name: t.a_web_admin,
+        detail: count(t.a_session_one, t.a_sessions, stats.web_sessions, &[]),
         on: true,
     });
     let mut warnings = info.warnings.clone();
     if info.case_insensitive == Some(true) {
-        warnings.push(
-            "the data directory is on a case-insensitive file system, so names that differ \
-             only in case (Report.pdf, report.pdf) cannot coexist. A case-sensitive file system \
-             (Linux with ext4, XFS or Btrfs) is recommended."
-                .to_owned(),
-        );
+        warnings.push(t.a_case_warning.to_owned());
     }
 
     let page = OverviewPage {
@@ -674,12 +677,19 @@ async fn overview(State(state): State<AppState>, headers: HeaderMap) -> Response
         host: state.base_url.host_str().unwrap_or("Gono Cloud").to_owned(),
         uptime,
         warnings,
-        users_note: format!(
-            "{} {} · {} disabled",
+        users_note: count(
+            t.a_admins_disabled_one,
+            t.a_admins_disabled,
             stats.admins,
-            if stats.admins == 1 { "admin" } else { "admins" },
-            stats.disabled
+            &[&stats.disabled.to_string()],
         ),
+        used_today: fill(
+            t.a_used_today,
+            &[&stats.app_passwords_used_today.to_string()],
+        ),
+        push_note: push_live.map_or_else(String::new, |(_, users)| {
+            count(t.a_user_connected, t.a_users_connected, users, &[])
+        }),
         storage_number,
         storage_unit: storage_unit.to_owned(),
         // The files' share of the file system they live on.
@@ -722,24 +732,20 @@ async fn users_page(
     let (accounts, counts) =
         match tokio::try_join!(users::list(&state.db), stats::per_user(&state.db)) {
             Ok(result) => result,
-            Err(err) => return internal_error(&err),
+            Err(err) => return internal_error(&session.chrome, &err),
         };
     let admins = accounts
         .iter()
         .filter(|user| user.is_admin && user.enabled)
         .count();
     let disabled = accounts.iter().filter(|user| !user.enabled).count();
-    let summary = format!(
-        "{} {} · {} {} · {} disabled",
+    let t = session.chrome.t;
+    let admins_text = count(t.a_admin_one, t.a_admins, admins, &[]);
+    let summary = count(
+        t.a_accounts_summary_one,
+        t.a_accounts_summary,
         accounts.len(),
-        if accounts.len() == 1 {
-            "account"
-        } else {
-            "accounts"
-        },
-        admins,
-        if admins == 1 { "admin" } else { "admins" },
-        disabled
+        &[&admins_text, &disabled.to_string()],
     );
     let rows = accounts
         .into_iter()
@@ -757,9 +763,7 @@ async fn users_page(
         })
         .collect();
     let notice = match done.done.as_deref() {
-        Some("deleted") => {
-            Some("The user was deleted. Their files were moved to deleted/.".to_owned())
-        }
+        Some("deleted") => Some(t.a_deleted_notice.to_owned()),
         _ => None,
     };
     let page = UsersPage {
@@ -809,12 +813,12 @@ struct NewUserForm {
 }
 
 /// Checks a new web login password and its repetition, then hashes it off the runtime.
-async fn new_password_hash(password: String, repeat: &str) -> Result<String, String> {
+async fn new_password_hash(t: &Text, password: String, repeat: &str) -> Result<String, String> {
     if password != repeat {
-        return Err("The passwords do not match.".to_owned());
+        return Err(t.a_passwords_differ.to_owned());
     }
     let password = SecretString::from(password);
-    password::check_policy(&password).map_err(|err| format!("The password {err}."))?;
+    password::check_policy(&password).map_err(|err| core_message(t, &err))?;
     tokio::task::spawn_blocking(move || password::hash(&password))
         .await
         .map_err(|err| err.to_string())?
@@ -848,21 +852,29 @@ async fn create_user(
     };
     let username = match Username::new(form.username.trim()) {
         Ok(username) => username,
-        Err(err) => return show_error(err.to_string()),
+        Err(err) => return show_error(core_message(session.chrome.t, &err)),
     };
     let display_name = match users::display_name_or_default(
         Some(form.display_name.trim()).filter(|name| !name.is_empty()),
         &username,
     ) {
         Ok(name) => name,
-        Err(err) => return show_error(err.to_string()),
+        Err(err) => return show_error(core_message(session.chrome.t, &err)),
     };
     match users::find(&state.db, &username).await {
-        Ok(Some(_)) => return show_error(format!("A user named {username} already exists.")),
+        Ok(Some(_)) => {
+            return show_error(fill(session.chrome.t.err_user_exists, &[username.as_str()]));
+        }
         Ok(None) => {}
-        Err(err) => return internal_error(&err),
+        Err(err) => return internal_error(&session.chrome, &err),
     }
-    let hash = match new_password_hash(form.password.clone(), &form.password_repeat).await {
+    let hash = match new_password_hash(
+        session.chrome.t,
+        form.password.clone(),
+        &form.password_repeat,
+    )
+    .await
+    {
         Ok(hash) => hash,
         Err(error) => return show_error(error),
     };
@@ -887,9 +899,9 @@ async fn create_user(
             ))
         }
         Err(err @ (CoreError::UserExists(_) | CoreError::UserDirNotEmpty { .. })) => {
-            show_error(err.to_string())
+            show_error(core_message(session.chrome.t, &err))
         }
-        Err(err) => internal_error(&err),
+        Err(err) => internal_error(&session.chrome, &err),
     }
 }
 
@@ -928,7 +940,7 @@ async fn user_page_response(
     } = options;
     let passwords = match app_passwords::list(&state.db, user.id).await {
         Ok(passwords) => passwords,
-        Err(err) => return internal_error(&err),
+        Err(err) => return internal_error(&session.chrome, &err),
     };
     let storage = match stats::per_user(&state.db).await {
         Ok(counts) => {
@@ -938,20 +950,22 @@ async fn user_page_response(
                 .unwrap_or_default()
                 .storage_used
         }
-        Err(err) => return internal_error(&err),
+        Err(err) => return internal_error(&session.chrome, &err),
     };
+    let t = session.chrome.t;
     let now = pages::now();
     let app_passwords = passwords
         .into_iter()
         .map(|password| AppPasswordRow {
             id: password.id,
             label: password.label,
-            created: pages::date(password.created_at),
+            created: fill(t.created, &[&pages::date(password.created_at)]),
             scopes: password.scopes.iter().map(ScopeChip::new).collect(),
-            last_used: password
-                .last_used_at
-                .map_or_else(|| "Never".to_owned(), |at| pages::ago(now, at)),
-            expiry: pages::expiry(password.expires_at, now),
+            last_used: password.last_used_at.map_or_else(
+                || t.never_used.to_owned(),
+                |at| ago(t, now, at, pages::date),
+            ),
+            expiry: pages::expiry(t, password.expires_at, now),
         })
         .collect();
     let page = UserPage {
@@ -971,6 +985,7 @@ async fn user_page_response(
             storage: format_bytes(storage),
         },
         is_self: user.id == session.user.user_id,
+        delete_label: fill(t.a_delete_named, &[user.username.as_str()]),
         app_passwords,
         form,
     };
@@ -995,23 +1010,17 @@ async fn user_page(
         Ok(user) => user,
         Err(halt) => return *halt,
     };
+    let t = session.chrome.t;
+    let name = user.username.as_str();
     let notice = match done.done.as_deref() {
-        Some("created") => Some(format!("User {} was created.", user.username)),
-        Some("enabled") => Some("The account was enabled.".to_owned()),
-        Some("disabled") => Some(
-            "The account was disabled. Its devices and browser sessions are signed out.".to_owned(),
-        ),
-        Some("promoted") => Some(format!(
-            "{} is now an admin and can sign in to this admin UI.",
-            user.username
-        )),
-        Some("demoted") => Some(format!(
-            "{} is no longer an admin. Their files and devices are not affected.",
-            user.username
-        )),
-        Some("renamed") => Some("The display name was changed.".to_owned()),
-        Some("password") => Some("The web login password was set.".to_owned()),
-        Some("revoked") => Some("The app password was revoked.".to_owned()),
+        Some("created") => Some(fill(t.a_notice_created, &[name])),
+        Some("enabled") => Some(t.a_notice_enabled.to_owned()),
+        Some("disabled") => Some(t.a_notice_disabled.to_owned()),
+        Some("promoted") => Some(fill(t.a_notice_promoted, &[name])),
+        Some("demoted") => Some(fill(t.a_notice_demoted, &[name])),
+        Some("renamed") => Some(t.a_notice_renamed.to_owned()),
+        Some("password") => Some(t.a_notice_password.to_owned()),
+        Some("revoked") => Some(t.notice_revoked.to_owned()),
         _ => None,
     };
     let options = UserPageOptions {
@@ -1076,7 +1085,7 @@ async fn set_enabled(
         Err(halt) => return *halt,
     };
     if !enabled && user.id == session.user.user_id {
-        let error = "You cannot disable the account you are signed in with.".to_owned();
+        let error = session.chrome.t.a_cannot_disable_self.to_owned();
         return user_error(&state, &admin, &session, &user, StatusCode::CONFLICT, error).await;
     }
     match users::set_enabled(&state.db, &user.username, enabled).await {
@@ -1088,11 +1097,11 @@ async fn set_enabled(
                 &session,
                 &user,
                 StatusCode::CONFLICT,
-                err.to_string(),
+                core_message(session.chrome.t, &err),
             )
             .await;
         }
-        Err(err) => return internal_error(&err),
+        Err(err) => return internal_error(&session.chrome, &err),
     }
     if !enabled && let Err(err) = web_sessions::delete_for_user(&state.db, user.id, None).await {
         tracing::warn!(error = %err, "cannot end the browser sessions of a disabled account");
@@ -1144,7 +1153,7 @@ async fn set_admin(
     };
     // Another admin has to do it, so that nobody locks themself out by accident.
     if !is_admin && user.id == session.user.user_id {
-        let error = "You cannot demote the account you are signed in with.".to_owned();
+        let error = session.chrome.t.a_cannot_demote_self.to_owned();
         return user_error(&state, &admin, &session, &user, StatusCode::CONFLICT, error).await;
     }
     match users::set_admin(&state.db, &user.username, is_admin).await {
@@ -1156,11 +1165,11 @@ async fn set_admin(
                 &session,
                 &user,
                 StatusCode::CONFLICT,
-                err.to_string(),
+                core_message(session.chrome.t, &err),
             )
             .await;
         }
-        Err(err) => return internal_error(&err),
+        Err(err) => return internal_error(&session.chrome, &err),
     }
     tracing::info!(by = %session.user.username, user = %user.username, is_admin, "admin changed an account's role");
     let done = if is_admin { "promoted" } else { "demoted" };
@@ -1200,9 +1209,10 @@ async fn set_display_name(
         Ok(_) => {}
         Err(err @ CoreError::InvalidDisplayName(_)) => {
             let status = StatusCode::UNPROCESSABLE_ENTITY;
-            return user_error(&state, &admin, &session, &user, status, err.to_string()).await;
+            let error = core_message(session.chrome.t, &err);
+            return user_error(&state, &admin, &session, &user, status, error).await;
         }
-        Err(err) => return internal_error(&err),
+        Err(err) => return internal_error(&session.chrome, &err),
     }
     tracing::info!(by = %session.user.username, user = %user.username, "admin changed a display name");
     see_other(&format!(
@@ -1239,7 +1249,8 @@ async fn set_password(
         Ok(user) => user,
         Err(halt) => return *halt,
     };
-    let hash = match new_password_hash(form.password, &form.password_repeat).await {
+    let hash = match new_password_hash(session.chrome.t, form.password, &form.password_repeat).await
+    {
         Ok(hash) => hash,
         Err(error) => {
             let status = StatusCode::UNPROCESSABLE_ENTITY;
@@ -1247,7 +1258,7 @@ async fn set_password(
         }
     };
     if let Err(err) = users::set_password_hash(&state.db, &user.username, &hash).await {
-        return internal_error(&err);
+        return internal_error(&session.chrome, &err);
     }
     // Sign the user out everywhere else; an admin changing their own password stays in.
     let keep = (user.id == session.user.user_id).then_some(session.user.session_id);
@@ -1297,18 +1308,18 @@ async fn delete_confirmation(
                 .unwrap_or_default()
                 .app_passwords
         }
-        Err(err) => return internal_error(&err),
+        Err(err) => return internal_error(&session.chrome, &err),
     };
-    let error = error.or_else(|| {
-        (user.id == session.user.user_id)
-            .then(|| "You cannot delete the account you are signed in with.".to_owned())
-    });
+    let t = session.chrome.t;
+    let error = error
+        .or_else(|| (user.id == session.user.user_id).then(|| t.a_cannot_delete_self.to_owned()));
     let page = DeletePage {
         chrome: session.chrome.clone(),
         frame: admin.frame(session, false, true),
         base: admin.user_url(user.username.as_str()),
         username: user.username.to_string(),
-        app_passwords,
+        title: fill(t.a_delete_question, &[user.username.as_str()]),
+        effect: count(t.a_delete_effect_one, t.a_delete_effect, app_passwords, &[]),
         error,
     };
     web::render(status, &page)
@@ -1339,7 +1350,7 @@ async fn delete_user(
     let deleted = match users::delete(&state.db, &user.username).await {
         Ok(deleted) => deleted,
         Err(err @ CoreError::LastAdmin(_)) => {
-            let error = Some(err.to_string());
+            let error = Some(core_message(session.chrome.t, &err));
             return delete_confirmation(
                 &state,
                 &admin,
@@ -1350,7 +1361,7 @@ async fn delete_user(
             )
             .await;
         }
-        Err(err) => return internal_error(&err),
+        Err(err) => return internal_error(&session.chrome, &err),
     };
     let layout = state.dav.fs().layout().clone();
     let retired = tokio::task::spawn_blocking(move || {
@@ -1412,10 +1423,11 @@ impl AppPasswordFields {
 
 /// Validates the form: label, expiry and scopes.
 pub(crate) fn parse_app_password(
+    t: &Text,
     form: &AppPasswordForm,
     now: i64,
 ) -> Result<(String, Vec<Scope>, Option<i64>), String> {
-    let label = app_passwords::check_label(&form.label).map_err(|err| err.to_string())?;
+    let label = app_passwords::check_label(&form.label).map_err(|err| core_message(t, &err))?;
     let expires_at = if form.expires_in_days.is_empty() {
         None
     } else {
@@ -1424,12 +1436,10 @@ pub(crate) fn parse_app_password(
             .parse()
             .ok()
             .filter(|days| (1..=3650).contains(days))
-            .ok_or("The expiry must be a number of days between 1 and 3650.")?;
+            .ok_or_else(|| t.err_expiry.to_owned())?;
         Some(now + days * 86_400)
     };
-    let path = |value: &str| {
-        RelPath::parse(value).map_err(|err| format!("Invalid path {value:?}: {err}."))
-    };
+    let path = |value: &str| RelPath::parse(value).map_err(|_| fill(t.err_invalid_path, &[value]));
     let scopes = match form.access.as_str() {
         "view" => vec![Scope {
             permission: Permission::View,
@@ -1442,7 +1452,7 @@ pub(crate) fn parse_app_password(
                     continue;
                 }
                 if mount.mount.is_empty() || mount.storage.is_empty() {
-                    return Err("Every mount needs both paths.".to_owned());
+                    return Err(t.err_mount_paths.to_owned());
                 }
                 scopes.push(Scope {
                     mount_path: path(&mount.mount)?,
@@ -1455,9 +1465,9 @@ pub(crate) fn parse_app_password(
                 });
             }
             if scopes.is_empty() {
-                return Err("Enter at least one folder for \"Selected folders\".".to_owned());
+                return Err(t.err_no_mounts.to_owned());
             }
-            app_passwords::check_scopes(scopes).map_err(|err| err.to_string())?
+            app_passwords::check_scopes(scopes).map_err(|err| core_message(t, &err))?
         }
         _ => vec![Scope::full_access()],
     };
@@ -1485,7 +1495,7 @@ async fn create_app_password(
     };
     let form = fields.form();
     let now = pages::now();
-    let (label, scopes, expires_at) = match parse_app_password(&form, now) {
+    let (label, scopes, expires_at) = match parse_app_password(session.chrome.t, &form, now) {
         Ok(parsed) => parsed,
         Err(error) => {
             let options = UserPageOptions {
@@ -1500,7 +1510,7 @@ async fn create_app_password(
     let (id, token) =
         match app_passwords::create(&state.db, user.id, &label, scopes.clone(), expires_at).await {
             Ok(created) => created,
-            Err(err) => return internal_error(&err),
+            Err(err) => return internal_error(&session.chrome, &err),
         };
     tracing::info!(by = %session.user.username, user = %user.username, app_password = id, "admin created an app password");
     admin.remember(
@@ -1531,12 +1541,10 @@ async fn created_page(State(state): State<AppState>, headers: HeaderMap) -> Resp
         let page = MessagePage {
             chrome: session.chrome.clone(),
             frame: admin.frame(&session, false, true),
-            heading: "Nothing to show".to_owned(),
-            lead: "A new app password is shown only once, right after it was created. Create \
-                   another one if it was not written down."
-                .to_owned(),
+            heading: session.chrome.t.a_nothing_to_show.to_owned(),
+            lead: session.chrome.t.a_nothing_to_show_lead.to_owned(),
             link_href: admin.url("/users"),
-            link_label: "All users".to_owned(),
+            link_label: session.chrome.t.a_all_users.to_owned(),
         };
         return web::render(StatusCode::GONE, &page);
     };
@@ -1549,7 +1557,7 @@ async fn created_page(State(state): State<AppState>, headers: HeaderMap) -> Resp
         scopes: created.scopes.iter().map(ScopeChip::new).collect(),
         expiry: created
             .expires_at
-            .map_or_else(|| "Never".to_owned(), pages::time),
+            .map_or_else(|| session.chrome.t.no_expiry.to_owned(), pages::time),
         server: state.base_url.as_str().trim_end_matches('/').to_owned(),
     };
     let mut response = web::render(StatusCode::OK, &page);
@@ -1588,7 +1596,7 @@ async fn revoke_app_password(
         }
         // Already revoked (for example in another tab): nothing to report.
         Ok(false) => see_other(&admin.user_url(user.username.as_str())),
-        Err(err) => internal_error(&err),
+        Err(err) => internal_error(&session.chrome, &err),
     }
 }
 

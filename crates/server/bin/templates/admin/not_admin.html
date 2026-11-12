@@ -1,7 +1,7 @@
 {%- extends "card.html" -%}
-{%- block title %}Not an administrator{% endblock -%}
+{%- block title %}{{ chrome.t.a_not_admin }}{% endblock -%}
 {%- block card %}
-<h1>Not an administrator</h1>
-<p class="muted mt-6">You are signed in as <b>{{ username }}</b>, which is not an admin account. Sign out and sign in with an admin account to continue.</p>
-<form method="post" action="{{ prefix }}/logout"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn primary block" type="submit">Sign out</button></form>
+<h1>{{ chrome.t.a_not_admin }}</h1>
+<p class="muted mt-6">{{ chrome.t.a_not_admin_before }}<b>{{ username }}</b>{{ chrome.t.a_not_admin_after }}</p>
+<form method="post" action="{{ prefix }}/logout"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn primary block" type="submit">{{ chrome.t.sign_out }}</button></form>
 {%- endblock %}

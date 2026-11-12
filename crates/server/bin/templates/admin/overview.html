@@ -1,33 +1,33 @@
 {%- extends "admin/frame.html" -%}
-{%- block title %}Overview{% endblock -%}
+{%- block title %}{{ chrome.t.a_overview }}{% endblock -%}
 {%- block content %}
 <div class="page-head">
   <div><h1>{{ host }}</h1>
-    <p class="sub"><span class="badge ok dot">Running</span> &nbsp;Gono Cloud <span class="mono">{{ frame.version }}</span> · up {{ uptime }}</p></div>
-  <div class="head-actions"><a class="btn" href="{{ frame.prefix }}/users">Manage users</a></div>
+    <p class="sub"><span class="badge ok dot">{{ chrome.t.a_running }}</span> &nbsp;Gono Cloud <span class="mono">{{ frame.version }}</span> · {{ uptime }}</p></div>
+  <div class="head-actions"><a class="btn" href="{{ frame.prefix }}/users">{{ chrome.t.a_manage_users }}</a></div>
 </div>
 {%- for warning in warnings %}
-<div class="flash warn" role="status"><b>Check the configuration:</b> {{ warning }}</div>
+<div class="flash warn" role="status"><b>{{ chrome.t.a_check_config }}</b> {{ warning }}</div>
 {%- endfor %}
 <div class="tiles">
-  <div class="panel tile"><div class="label">Users</div><div class="value">{{ stats.users }}</div><div class="note">{{ users_note }}</div></div>
-  <div class="panel tile"><div class="label">App passwords</div><div class="value">{{ stats.app_passwords }}</div><div class="note">{{ stats.app_passwords_used_today }} used in the last 24 h</div></div>
-  <div class="panel tile"><div class="label">Storage used</div><div class="value">{{ storage_number }} <small>{{ storage_unit }}</small></div>
+  <div class="panel tile"><div class="label">{{ chrome.t.a_users }}</div><div class="value">{{ stats.users }}</div><div class="note">{{ users_note }}</div></div>
+  <div class="panel tile"><div class="label">{{ chrome.t.a_app_passwords }}</div><div class="value">{{ stats.app_passwords }}</div><div class="note">{{ used_today }}</div></div>
+  <div class="panel tile"><div class="label">{{ chrome.t.a_storage_used }}</div><div class="value">{{ storage_number }} <small>{{ storage_unit }}</small></div>
     {%- if let Some((used, total)) = disk %}
     <progress value="{{ used }}" max="{{ total }}">{{ disk_note }}</progress>
     {%- endif %}
     <div class="note">{{ disk_note }}</div></div>
-  <div class="panel tile"><div class="label">Live push connections</div>
-    {%- if let Some((connections, users)) = push_live %}
-    <div class="value">{{ connections }}</div><div class="note">{{ users }} {% if *users == 1 %}user{% else %}users{% endif %} connected</div>
+  <div class="panel tile"><div class="label">{{ chrome.t.a_live_push }}</div>
+    {%- if let Some((connections, _)) = push_live %}
+    <div class="value">{{ connections }}</div><div class="note">{{ push_note }}</div>
     {%- else %}
-    <div class="value">–</div><div class="note">notify_push is off</div>
+    <div class="value">–</div><div class="note">{{ chrome.t.a_push_off }}</div>
     {%- endif %}</div>
 </div>
 <div class="grid even">
   <div class="stack">
     <div class="panel">
-      <div class="panel-head"><div><h2>Server</h2><p class="muted small">From the configuration file and the running process. Change settings in the file and restart.</p></div></div>
+      <div class="panel-head"><div><h2>{{ chrome.t.a_server }}</h2><p class="muted small">{{ chrome.t.a_server_note }}</p></div></div>
       <div class="panel-body"><dl class="facts">
         {%- for fact in server_facts %}
         <dt>{{ fact.label }}</dt><dd{% if fact.mono %} class="mono"{% endif %}>{{ fact.value }}</dd>
@@ -35,44 +35,44 @@
       </dl></div>
     </div>
     <div class="panel">
-      <div class="panel-head"><div><h2>Connect a client</h2><p class="muted small">Nextcloud apps only need the server address; they sign in through the browser (Login Flow v2).</p></div></div>
+      <div class="panel-head"><div><h2>{{ chrome.t.a_connect }}</h2><p class="muted small">{{ chrome.t.a_connect_note }}</p></div></div>
       <div class="panel-body"><dl class="links">
-        <dt>Server address</dt><dd>{{ server_address }}</dd>
-        <dt>WebDAV (Finder, Explorer, rclone)</dt><dd>{{ webdav_url }}</dd>
+        <dt>{{ chrome.t.a_server_address }}</dt><dd>{{ server_address }}</dd>
+        <dt>{{ chrome.t.a_webdav_clients }}</dt><dd>{{ webdav_url }}</dd>
         {%- if let Some(websocket) = websocket %}
-        <dt>notify_push WebSocket</dt><dd>{{ websocket }}</dd>
+        <dt>{{ chrome.t.a_websocket }}</dt><dd>{{ websocket }}</dd>
         {%- endif %}
       </dl></div>
     </div>
   </div>
   <div class="stack">
     <div class="panel"><div class="panel-body">
-      <h2>Storage</h2>
+      <h2>{{ chrome.t.a_storage }}</h2>
       <dl class="facts mt-18">
-        <dt>Data directory</dt><dd class="mono">{{ data_dir }}</dd>
-        <dt>File system</dt><dd>{% match case_insensitive %}{% when Some(true) %}<span class="badge warn">case-insensitive</span>{% when Some(false) %}<span class="badge ok">case-sensitive</span>{% when None %}<span class="muted">unknown</span>{% endmatch %}</dd>
-        <dt>Used by files</dt><dd>{{ storage_used }}</dd>
-        <dt>Free</dt><dd>{{ free_of_total }}</dd>
-        <dt>Uploads in progress</dt><dd>{{ stats.uploads }}</dd>
-        <dt>Database</dt><dd class="mono">{{ db_path }}</dd>
-        <dt>Database size</dt><dd>{{ db_size }}</dd>
+        <dt>{{ chrome.t.a_data_dir }}</dt><dd class="mono">{{ data_dir }}</dd>
+        <dt>{{ chrome.t.a_file_system }}</dt><dd>{% match case_insensitive %}{% when Some(true) %}<span class="badge warn">{{ chrome.t.a_case_insensitive }}</span>{% when Some(false) %}<span class="badge ok">{{ chrome.t.a_case_sensitive }}</span>{% when None %}<span class="muted">{{ chrome.t.a_unknown }}</span>{% endmatch %}</dd>
+        <dt>{{ chrome.t.a_used_by_files }}</dt><dd>{{ storage_used }}</dd>
+        <dt>{{ chrome.t.a_free }}</dt><dd>{{ free_of_total }}</dd>
+        <dt>{{ chrome.t.a_uploads }}</dt><dd>{{ stats.uploads }}</dd>
+        <dt>{{ chrome.t.a_database }}</dt><dd class="mono">{{ db_path }}</dd>
+        <dt>{{ chrome.t.a_database_size }}</dt><dd>{{ db_size }}</dd>
       </dl>
     </div></div>
     <div class="panel"><div class="panel-body">
-      <h2>Features</h2>
+      <h2>{{ chrome.t.a_features }}</h2>
       <ul class="features mt-18">
         {%- for feature in features %}
-        <li><span><b>{{ feature.name }}</b><span class="muted">{{ feature.detail }}</span></span>{% if feature.on %}<span class="badge ok">On</span>{% else %}<span class="badge off">Off</span>{% endif %}</li>
+        <li><span><b>{{ feature.name }}</b><span class="muted">{{ feature.detail }}</span></span>{% if feature.on %}<span class="badge ok">{{ chrome.t.a_on }}</span>{% else %}<span class="badge off">{{ chrome.t.a_off }}</span>{% endif %}</li>
         {%- endfor %}
       </ul>
     </div></div>
     <div class="panel"><div class="panel-body">
-      <h2>About</h2>
-      <p class="muted small mt-6">Self-hosted WebDAV file server compatible with Nextcloud clients, built on dav-server-rs.</p>
+      <h2>{{ chrome.t.a_about }}</h2>
+      <p class="muted small mt-6">{{ chrome.t.a_about_text }}</p>
       <dl class="facts">
-        <dt>Source</dt><dd><a href="https://github.com/gonolab/gono.cloud">gonolab/gono.cloud</a></dd>
-        <dt>License</dt><dd>MIT OR Apache-2.0</dd>
-        <dt>Guides</dt><dd><a href="https://github.com/gonolab/gono.cloud/blob/main/docs/reverse-proxy.md">Reverse proxy</a></dd>
+        <dt>{{ chrome.t.a_source }}</dt><dd><a href="https://github.com/gonolab/gono.cloud">gonolab/gono.cloud</a></dd>
+        <dt>{{ chrome.t.a_license }}</dt><dd>MIT OR Apache-2.0</dd>
+        <dt>{{ chrome.t.a_guides }}</dt><dd><a href="https://github.com/gonolab/gono.cloud/blob/main/docs/reverse-proxy.md">{{ chrome.t.a_reverse_proxy }}</a></dd>
       </dl>
     </div></div>
   </div>

@@ -1,14 +1,14 @@
 {%- extends "layout.html" -%}
 {%- block body -%}
 <main class="container site-main" id="main" tabindex="-1">
-<nav class="tabs admin-tabs" aria-label="Admin">
-  <a class="tabs__item" href="{{ frame.prefix }}/"{% if frame.on_overview %} aria-current="page"{% endif %}>Overview</a>
-  <a class="tabs__item" href="{{ frame.prefix }}/users"{% if frame.on_users %} aria-current="page"{% endif %}>Users</a>
+<nav class="tabs admin-tabs" aria-label="{{ chrome.t.admin }}">
+  <a class="tabs__item" href="{{ frame.prefix }}/"{% if frame.on_overview %} aria-current="page"{% endif %}>{{ chrome.t.a_overview }}</a>
+  <a class="tabs__item" href="{{ frame.prefix }}/users"{% if frame.on_users %} aria-current="page"{% endif %}>{{ chrome.t.a_users }}</a>
 </nav>
 {% block content %}{% endblock %}
 </main>
 <footer class="foot"><div class="container foot-in">
-  <span>Gono Cloud <span class="mono">{{ frame.version }}</span> · Nextcloud protocol <span class="mono">{{ frame.nextcloud }}</span> · instance <span class="mono">{{ frame.instance_id }}</span></span>
-  <span><a href="https://github.com/gonolab/gono.cloud">Source</a> · MIT OR Apache-2.0</span>
+  <span>Gono Cloud <span class="mono">{{ frame.version }}</span> · {{ chrome.t.a_footer_protocol }} <span class="mono">{{ frame.nextcloud }}</span> · {{ chrome.t.a_footer_instance }} <span class="mono">{{ frame.instance_id }}</span></span>
+  <span><a href="https://github.com/gonolab/gono.cloud">{{ chrome.t.a_source }}</a> · MIT OR Apache-2.0</span>
 </div></footer>
 {%- endblock -%}

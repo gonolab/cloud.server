@@ -1,17 +1,17 @@
 {%- extends "card.html" -%}
-{%- block title %}Sign in{% endblock -%}
+{%- block title %}{{ chrome.t.sign_in }}{% endblock -%}
 {%- block card %}
-<h1>Sign in to the admin UI</h1>
-<p class="muted mt-6">Use your web login password. App passwords of devices do not work here.</p>
+<h1>{{ chrome.t.a_sign_in_title }}</h1>
+<p class="muted mt-6">{{ chrome.t.sign_in_lead }}</p>
 {%- if let Some(error) = error %}
 <div class="flash bad" role="alert">{{ error }}</div>
 {%- endif %}
 <form method="post" action="{{ prefix }}/login">
   <input type="hidden" name="csrf" value="{{ csrf }}">
-  <label class="field" for="login-user"><span>Username</span>
+  <label class="field" for="login-user"><span>{{ chrome.t.username }}</span>
     <input id="login-user" type="text" name="user" value="{{ user }}" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus></label>
-  <label class="field" for="login-password"><span>Password</span>
+  <label class="field" for="login-password"><span>{{ chrome.t.password }}</span>
     <input id="login-password" type="password" name="password" autocomplete="current-password" required></label>
-  <button class="btn primary block" type="submit">Sign in</button>
+  <button class="btn primary block" type="submit">{{ chrome.t.sign_in }}</button>
 </form>
 {%- endblock %}

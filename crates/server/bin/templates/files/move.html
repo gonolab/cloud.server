@@ -1,0 +1,31 @@
+{%- extends "files/frame.html" -%}
+{%- block title %}{{ title }}{% endblock -%}
+{%- block content %}
+<section class="pane narrow"><div class="panel-body">
+  <nav class="breadcrumb" aria-label="{{ chrome.t.folder }}">
+    {%- for crumb in crumbs %}<a href="{{ crumb.href }}">{{ crumb.name }}</a><span class="sep" aria-hidden="true">/</span>{% endfor %}
+  </nav>
+  <h1>{{ title }}</h1>
+  <p class="muted mt-6">{{ chrome.t.move_lead }}</p>
+  {%- if let Some(error) = error %}
+  <div class="flash bad" role="alert">{{ error }}</div>
+  {%- endif %}
+  <form method="post" action="{{ dir_href }}">
+    <input type="hidden" name="csrf" value="{{ chrome.csrf }}"><input type="hidden" name="action" value="move"><input type="hidden" name="at" value="{{ at }}">
+    {%- for item in items %}<input type="hidden" name="item" value="{{ item }}">{% endfor %}
+    <p class="picker__path"><b>{{ at_label }}</b></p>
+    <ul class="picker">
+      {%- if let Some(up) = up %}
+      <li><button type="submit" name="go" value="{{ up }}"><svg class="icon"><use href="#i-up"/></svg>{{ chrome.t.up }}</button></li>
+      {%- endif %}
+      {%- for choice in choices %}
+      <li><button type="submit" name="go" value="{{ choice.path }}"><svg class="icon"><use href="#i-folder"/></svg>{{ choice.name }}</button></li>
+      {%- endfor %}
+      {%- if choices.is_empty() %}
+      <li><span class="picker__here">{{ chrome.t.no_subfolders }}</span></li>
+      {%- endif %}
+    </ul>
+    <div class="actions"><button class="btn primary" type="submit" name="confirm" value="1">{{ chrome.t.move_here }}</button><a class="btn ghost" href="{{ dir_href }}">{{ chrome.t.cancel }}</a></div>
+  </form>
+</div></section>
+{%- endblock %}

@@ -60,8 +60,12 @@ trusted_proxies = ["127.0.0.1", "::1"]
 - **notify_push timing:** the proxy's idle timeout for the WebSocket must be longer than
   `notify_push.ping_interval_secs`. Gono Cloud pings every interval and closes connections that
   do not answer by the next ping, so an idle timeout of at least twice the interval is safe.
-- **Admin UI:** `admin.enabled` and `admin.path` (default `/gono-admin`). The proxy may restrict
-  that path further, for example to a VPN range (examples below).
+- **Admin UI:** `admin.enabled` (default on) and `admin.path` (default `/gono-admin`). The proxy
+  may restrict that path further, for example to a VPN range (examples below).
+- **Web file UI:** `/apps/files/`, the sign-in page `/login` and the account page
+  `/apps/account/` (`files_ui.enabled`, default on). Uploads from the page's script send files up
+  to 16 MiB in one request and larger ones in 10 MiB chunks; uploads without JavaScript send the
+  whole selection in one request, so a body size limit (below) also limits them.
 
 ## nginx
 

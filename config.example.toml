@@ -96,10 +96,17 @@ max_connections_per_user = 64
 [admin]
 # Serve the web admin UI: an overview of this server, user accounts and app passwords. Only
 # accounts with the admin flag can sign in, with their web login password; app passwords cannot
-# access it. Default: false.
-enabled = false
+# access it. Default: true.
+enabled = true
 
 # URL path of the admin UI. Letters, digits, "-", ".", "_" and "~" only, without a trailing
 # slash; paths the server uses itself (/remote.php, /ocs, /index.php, /push, ...) are refused.
 # Default: "/gono-admin".
 path = "/gono-admin"
+
+[files_ui]
+# Serve the web file UI at /apps/files/ (browse, search, preview, upload, download, organize
+# and favorites), with the sign-in page /login and the account page /apps/account/, where users
+# change their web login password and manage their own app passwords. Users sign in with their
+# web login password; app passwords cannot access it. "/" leads here. Default: true.
+enabled = true

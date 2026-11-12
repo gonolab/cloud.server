@@ -49,6 +49,9 @@ pub struct Config {
     /// `[admin]`: the web admin UI.
     #[serde(default)]
     pub admin: AdminConfig,
+    /// `[files_ui]`: the web file UI.
+    #[serde(default)]
+    pub files_ui: FilesUiConfig,
 }
 
 /// `[server]` table.
@@ -223,9 +226,25 @@ pub struct AdminConfig {
 impl Default for AdminConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             path: DEFAULT_ADMIN_PATH.to_owned(),
         }
+    }
+}
+
+/// `[files_ui]` table.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct FilesUiConfig {
+    /// Serve the web file UI at `/apps/files/`, with the sign-in page at `/login` and the
+    /// account page at `/apps/account/`. Users sign in with their web login password; app
+    /// passwords cannot access it.
+    pub enabled: bool,
+}
+
+impl Default for FilesUiConfig {
+    fn default() -> Self {
+        Self { enabled: true }
     }
 }
 
@@ -565,7 +584,8 @@ mod tests {
         assert_eq!(config.logging.level, LogLevel::Info);
         assert_eq!(config.logging.file, None, "logs go to stdout by default");
         assert!(config.notify_push.enabled);
-        assert!(!config.admin.enabled);
+        assert!(config.admin.enabled);
+        assert!(config.files_ui.enabled);
         assert_eq!(config.admin.path, "/gono-admin");
         assert!(config.warnings().is_empty());
     }

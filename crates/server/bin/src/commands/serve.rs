@@ -25,6 +25,7 @@ use crate::{
     admin::{Admin, ServerInfo},
     app::{self, AppState},
     auth::Authenticator,
+    files::Files,
     janitor::Janitor,
     logging::{self, Destination},
     ratelimit::RateLimiter,
@@ -176,6 +177,12 @@ async fn serve(config: Config, config_path: std::path::PathBuf) -> anyhow::Resul
     } else {
         None
     };
+    let files = if config.files_ui.enabled {
+        tracing::info!("web file UI enabled at /apps/files/");
+        Some(Arc::new(Files::new()))
+    } else {
+        None
+    };
     let state = AppState {
         db: pool.clone(),
         auth,
@@ -187,6 +194,7 @@ async fn serve(config: Config, config_path: std::path::PathBuf) -> anyhow::Resul
         trusted_proxies: Arc::new(config.server.trusted_proxies.clone()),
         push: push.clone(),
         admin,
+        files,
     };
     let on_signal = {
         let push = push.clone();

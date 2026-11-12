@@ -1,0 +1,144 @@
+{%- extends "files/frame.html" -%}
+{%- block title %}{{ title }}{% endblock -%}
+{%- block content %}
+<div class="layout"{% if is_folder() %} data-folder="{{ dir_href }}" data-folder-name="{{ folder }}"{% endif %}>
+<div class="layout__main">
+{%- if let Some(notice) = notice %}
+<div class="flash ok" role="status">{{ notice }}</div>
+{%- endif %}
+{%- if let Some(error) = error %}
+<div class="flash bad" role="alert">{{ error }}</div>
+{%- endif %}
+<div data-uploads></div>
+<section class="pane" aria-labelledby="files-title">
+  <div class="files-head">
+    <div>
+      {%- if !crumbs.is_empty() %}
+      <nav class="breadcrumb" aria-label="{{ chrome.t.folder }}">
+        {%- for crumb in crumbs %}<a href="{{ crumb.href }}">{{ crumb.name }}</a><span class="sep" aria-hidden="true">/</span>{% endfor %}
+      </nav>
+      {%- endif %}
+      <h1 id="files-title">{{ heading }}</h1>
+      {%- if !sub.is_empty() %}
+      <div class="muted small">{{ sub }}</div>
+      {%- endif %}
+    </div>
+    {%- if is_folder() %}
+    <div class="files-actions">
+      <a class="btn primary" href="{{ dir_href }}?action=upload" data-upload-button><svg class="icon"><use href="#i-up"/></svg><span>{{ chrome.t.upload }}</span></a>
+      <a class="btn" href="{{ dir_href }}?action=mkdir"><svg class="icon"><use href="#i-folder-plus"/></svg><span>{{ chrome.t.new_folder }}</span></a>
+      <a class="btn" href="{{ dir_href }}?download" title="{{ chrome.t.download_zip }}"><svg class="icon"><use href="#i-zip"/></svg><span>{{ chrome.t.download_folder }}</span></a>
+    </div>
+    {%- endif %}
+  </div>
+  {%- if !tabs.is_empty() %}
+  <nav class="tabs" aria-label="{{ chrome.t.sort_by }}">
+    {%- for tab in tabs %}
+    <a class="tabs__item" href="{{ tab.href }}"{% if tab.current %} aria-current="true"{% endif %}>{{ tab.label }}{% if tab.current %}{% if tab.descending %} ↓{% else %} ↑{% endif %}{% endif %}</a>
+    {%- endfor %}
+  </nav>
+  {%- endif %}
+  {%- if let Some((title, hint)) = empty %}
+  <div class="files-empty"><b>{{ title }}</b>{{ hint }}</div>
+  {%- else %}
+  {%- if is_folder() %}
+  <form id="bulk" method="post" action="{{ dir_href }}"><input type="hidden" name="csrf" value="{{ chrome.csrf }}"></form>
+  <div class="bulk" data-bulk>
+    <label class="check" hidden data-select-all><input type="checkbox" aria-label="{{ chrome.t.select_all }}"><span>{{ chrome.t.select_all }}</span></label>
+    <span class="bulk__count" data-selected>{{ chrome.t.selection }}</span>
+    <button class="btn sm" type="submit" form="bulk" name="action" value="zip"><svg class="icon"><use href="#i-zip"/></svg>{{ chrome.t.download }}</button>
+    <button class="btn sm" type="submit" form="bulk" name="action" value="move"><svg class="icon"><use href="#i-move"/></svg>{{ chrome.t.move_to }}</button>
+    <button class="btn sm danger" type="submit" form="bulk" name="action" value="delete"><svg class="icon"><use href="#i-trash"/></svg>{{ chrome.t.delete }}</button>
+  </div>
+  {%- endif %}
+  <ul class="rows">
+  {%- for row in rows %}
+    <li class="file-row">
+      {%- if is_folder() %}
+      <input class="file-row__check" type="checkbox" name="item" value="{{ row.name }}" form="bulk" aria-label="{{ chrome.t.select }}: {{ row.name }}">
+      {%- else %}
+      <span></span>
+      {%- endif %}
+      <span class="kind {{ row.kind_class }}" aria-hidden="true">{% if row.is_dir %}<svg class="icon"><use href="#i-folder"/></svg>{% else %}{{ row.kind_label }}{% endif %}</span>
+      <div class="file-row__main">
+        <a class="file-row__name" href="{{ row.href }}">{{ row.name }}</a>
+        <div class="file-row__meta">
+          {%- if row.favorite %}<span class="star" title="{{ chrome.t.favorite }}"><svg class="icon"><use href="#i-star"/></svg></span>{% endif %}
+          <span>{{ row.size }}</span>
+          <span><svg class="icon"><use href="#i-clock"/></svg><time datetime="{{ row.modified_iso }}">{{ row.modified }}</time></span>
+          {%- if let Some(location) = row.location %}
+          <span><svg class="icon"><use href="#i-folder"/></svg><a href="{{ location.href }}">{{ location.name }}</a></span>
+          {%- endif %}
+        </div>
+      </div>
+      <div class="file-row__actions">
+        <a class="btn icon-only" href="{{ row.download_href }}" title="{% if row.is_dir %}{{ chrome.t.download_zip }}{% else %}{{ chrome.t.download }}{% endif %}"><svg class="icon"><use href="#i-down"/></svg><span class="sr-only">{{ chrome.t.download }}</span></a>
+        <details class="row-menu menu">
+          <summary class="btn icon-only" title="{{ chrome.t.more_actions }}"><svg class="icon"><use href="#i-dots"/></svg><span class="sr-only">{{ chrome.t.more_actions }}</span></summary>
+          <div class="menu__list">
+            <form method="post" action="{{ row.parent_href }}">
+              <input type="hidden" name="csrf" value="{{ chrome.csrf }}"><input type="hidden" name="action" value="favorite"><input type="hidden" name="item" value="{{ row.name }}"><input type="hidden" name="back" value="{{ chrome.here }}">
+              {%- if row.favorite %}
+              <input type="hidden" name="value" value="0"><button class="menu__item" type="submit"><svg class="icon"><use href="#i-star"/></svg>{{ chrome.t.remove_favorite }}</button>
+              {%- else %}
+              <input type="hidden" name="value" value="1"><button class="menu__item" type="submit"><svg class="icon"><use href="#i-star"/></svg>{{ chrome.t.add_favorite }}</button>
+              {%- endif %}
+            </form>
+            <a class="menu__item" href="{{ row.parent_href }}?action=rename&amp;item={{ row.item }}"><svg class="icon"><use href="#i-edit"/></svg>{{ chrome.t.rename }}</a>
+            <a class="menu__item" href="{{ row.parent_href }}?action=move&amp;item={{ row.item }}"><svg class="icon"><use href="#i-move"/></svg>{{ chrome.t.move_to }}</a>
+            <a class="menu__item menu__item--danger" href="{{ row.parent_href }}?action=delete&amp;item={{ row.item }}"><svg class="icon"><use href="#i-trash"/></svg>{{ chrome.t.delete }}</a>
+          </div>
+        </details>
+      </div>
+    </li>
+  {%- endfor %}
+  </ul>
+  {%- endif %}
+  {%- if let Some(pager) = pager %}
+  <nav class="pager" aria-label="{{ pager.label }}">
+    {%- if let Some(prev) = pager.prev %}<a class="btn sm" href="{{ prev }}">{{ chrome.t.previous }}</a>{% else %}<span></span>{% endif %}
+    <span>{{ pager.label }}</span>
+    {%- if let Some(next) = pager.next %}<a class="btn sm" href="{{ next }}">{{ chrome.t.next }}</a>{% else %}<span></span>{% endif %}
+  </nav>
+  {%- endif %}
+</section>
+</div>
+<aside class="layout__aside">
+  <div class="panel"><div class="card__body">
+    {%- if let Some(user) = chrome.user %}
+    <div class="who-card"><span class="avatar avatar--lg" aria-hidden="true">{{ user.initials }}</span><div><b>{{ user.display_name }}</b><span>{{ user.username }}</span></div></div>
+    {%- endif %}
+    <div class="usage"><span class="muted">{{ chrome.t.storage }}</span><b>{{ usage.used }}</b>
+      {%- if let Some(free) = usage.free %}<span class="muted">{{ free }}</span>{% endif %}</div>
+  </div></div>
+  <div class="panel"><div class="card__body">
+    <p class="card__title">{{ chrome.t.places }}</p>
+    <ul class="side-links">
+      <li><a href="/apps/files/"{% if chrome.on(1) %} aria-current="page"{% endif %}><svg class="icon"><use href="#i-home"/></svg>{{ chrome.t.all_files }}</a></li>
+      <li><a href="/apps/files/?view=favorites"{% if chrome.on(2) %} aria-current="page"{% endif %}><svg class="icon"><use href="#i-star"/></svg>{{ chrome.t.favorites }}</a></li>
+    </ul>
+  </div></div>
+  {%- if is_folder() %}
+  <div class="panel"><div class="card__body">
+    <p class="card__title">{{ chrome.t.upload }}</p>
+    <form class="upload-form" method="post" action="{{ dir_href }}?upload" enctype="multipart/form-data" data-upload-form>
+      <input type="hidden" name="csrf" value="{{ chrome.csrf }}">
+      <input type="file" name="file" multiple aria-label="{{ chrome.t.choose_files }}">
+      <label class="check"><input type="checkbox" name="replace" value="1"><span>{{ chrome.t.replace_existing }}</span></label>
+      <button class="btn primary block" type="submit">{{ chrome.t.upload }}</button>
+      <button class="btn block" type="button" hidden data-upload-folder>{{ chrome.t.upload_folder }}</button>
+      <p class="drop-hint" hidden data-drop-hint>{{ chrome.t.drop_hint }}</p>
+    </form>
+  </div></div>
+  <div class="panel"><div class="card__body">
+    <p class="card__title">{{ chrome.t.new_folder }}</p>
+    <form class="inline-form" method="post" action="{{ dir_href }}">
+      <input type="hidden" name="csrf" value="{{ chrome.csrf }}"><input type="hidden" name="action" value="mkdir">
+      <input type="text" name="name" required maxlength="255" aria-label="{{ chrome.t.folder_name }}" placeholder="{{ chrome.t.folder_name }}">
+      <button class="btn" type="submit">{{ chrome.t.create }}</button>
+    </form>
+  </div></div>
+  {%- endif %}
+</aside>
+</div>
+{%- endblock %}

@@ -121,6 +121,7 @@ async fn fixture() -> Fixture {
         trusted_proxies: Arc::new(Vec::new()),
         push: None,
         admin: Some(Arc::new(Admin::new(PREFIX, info))),
+        files: None,
     };
     Fixture {
         _dir: dir,
@@ -415,10 +416,19 @@ async fn pages_have_unique_ids_and_the_security_headers() {
         assert_eq!(ids.len(), unique.len(), "{page}: duplicate ids in {ids:?}");
         let csp = reply.header("content-security-policy");
         assert!(csp.contains("default-src 'none'") && csp.contains("frame-ancestors 'none'"));
-        assert!(!csp.contains("script-src"), "{page}: {csp}");
+        assert!(!csp.contains("unsafe-inline"), "{page}: {csp}");
         assert_eq!(reply.header("x-frame-options"), "DENY", "{page}");
         assert_eq!(reply.header("cache-control"), "no-store", "{page}");
-        assert!(!reply.body.contains("<script"), "{page}");
+        // The one script and its text carry the nonce of this response's policy.
+        let nonce = csp
+            .split("'nonce-")
+            .nth(1)
+            .and_then(|rest| rest.split('\'').next())
+            .unwrap_or_else(|| panic!("{page}: no script nonce in {csp}"));
+        let scripts = reply.body.matches("<script").count();
+        let with_nonce = reply.body.matches(&format!("nonce=\"{nonce}\"")).count();
+        assert_eq!(scripts, 2, "{page}");
+        assert_eq!(with_nonce, scripts, "{page}");
     }
 }
 

@@ -1,0 +1,75 @@
+{%- extends "files/frame.html" -%}
+{%- block title %}{{ row.name }}{% endblock -%}
+{%- block content %}
+<div class="layout">
+<div class="layout__main">
+{%- if let Some(notice) = notice %}
+<div class="flash ok" role="status">{{ notice }}</div>
+{%- endif %}
+{%- if let Some(error) = error %}
+<div class="flash bad" role="alert">{{ error }}</div>
+{%- endif %}
+<section class="pane" aria-labelledby="file-title">
+  <div class="files-head">
+    <div>
+      <nav class="breadcrumb" aria-label="{{ chrome.t.folder }}">
+        {%- for crumb in crumbs %}<a href="{{ crumb.href }}">{{ crumb.name }}</a><span class="sep" aria-hidden="true">/</span>{% endfor %}
+      </nav>
+      <h1 id="file-title">{{ row.name }}</h1>
+      <div class="file-row__meta">
+        {%- if row.favorite %}<span class="star"><svg class="icon"><use href="#i-star"/></svg>{{ chrome.t.favorite }}</span>{% endif %}
+        <span>{{ row.size }}</span>
+        <span><svg class="icon"><use href="#i-clock"/></svg><time datetime="{{ row.modified_iso }}">{{ row.modified }}</time></span>
+      </div>
+    </div>
+    <div class="files-actions">
+      <a class="btn primary" href="{{ row.download_href }}"><svg class="icon"><use href="#i-down"/></svg><span>{{ chrome.t.download }}</span></a>
+      <form method="post" action="{{ row.parent_href }}">
+        <input type="hidden" name="csrf" value="{{ chrome.csrf }}"><input type="hidden" name="action" value="favorite"><input type="hidden" name="item" value="{{ row.name }}"><input type="hidden" name="back" value="{{ row.href }}">
+        {%- if row.favorite %}
+        <input type="hidden" name="value" value="0"><button class="btn" type="submit" title="{{ chrome.t.remove_favorite }}"><svg class="icon star"><use href="#i-star"/></svg><span>{{ chrome.t.remove_favorite }}</span></button>
+        {%- else %}
+        <input type="hidden" name="value" value="1"><button class="btn" type="submit" title="{{ chrome.t.add_favorite }}"><svg class="icon"><use href="#i-star"/></svg><span>{{ chrome.t.add_favorite }}</span></button>
+        {%- endif %}
+      </form>
+      <details class="row-menu menu">
+        <summary class="btn" title="{{ chrome.t.more_actions }}"><svg class="icon"><use href="#i-dots"/></svg><span class="sr-only">{{ chrome.t.more_actions }}</span></summary>
+        <div class="menu__list">
+          <a class="menu__item" href="{{ row.parent_href }}?action=rename&amp;item={{ row.item }}"><svg class="icon"><use href="#i-edit"/></svg>{{ chrome.t.rename }}</a>
+          <a class="menu__item" href="{{ row.parent_href }}?action=move&amp;item={{ row.item }}"><svg class="icon"><use href="#i-move"/></svg>{{ chrome.t.move_to }}</a>
+          <a class="menu__item menu__item--danger" href="{{ row.parent_href }}?action=delete&amp;item={{ row.item }}"><svg class="icon"><use href="#i-trash"/></svg>{{ chrome.t.delete }}</a>
+        </div>
+      </details>
+    </div>
+  </div>
+  {%- if image() %}
+  <div class="preview"><img src="{{ raw_href }}" alt="{{ row.name }}"></div>
+  {%- else if video() %}
+  <div class="preview"><video src="{{ raw_href }}" controls preload="metadata"></video></div>
+  {%- else if audio() %}
+  <div class="preview"><audio src="{{ raw_href }}" controls preload="metadata"></audio></div>
+  {%- else if let Some(text) = text %}
+  <div class="preview preview--text"><pre>{{ text }}</pre></div>
+  {%- else if blocked() %}
+  <div class="preview"><p class="preview__none">{{ chrome.t.preview_blocked }}</p></div>
+  {%- else %}
+  <div class="preview"><p class="preview__none">{{ chrome.t.no_preview }}</p></div>
+  {%- endif %}
+</section>
+{%- if truncated %}
+<p class="muted small">{{ chrome.t.preview_truncated }}</p>
+{%- endif %}
+</div>
+<aside class="layout__aside">
+  <div class="panel"><div class="card__body">
+    <p class="card__title">{{ chrome.t.file_details }}</p>
+    <dl class="facts">
+      <dt>{{ chrome.t.kind }}</dt><dd>{{ kind }}</dd>
+      <dt>{{ chrome.t.size }}</dt><dd>{{ row.size }}</dd>
+      <dt>{{ chrome.t.modified }}</dt><dd><time datetime="{{ row.modified_iso }}">{{ row.modified }}</time></dd>
+      <dt>{{ chrome.t.folder }}</dt><dd><a href="{{ row.parent_href }}">{% if let Some(last) = crumbs.last() %}{{ last.name }}{% endif %}</a></dd>
+    </dl>
+  </div></div>
+</aside>
+</div>
+{%- endblock %}

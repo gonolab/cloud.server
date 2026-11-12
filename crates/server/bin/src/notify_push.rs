@@ -188,7 +188,7 @@ async fn serve(
     tracing::info!(
         %client,
         user = %identity.username,
-        app_password = identity.app_password_id,
+        app_password = ?identity.app_password_id,
         "notify_push connected"
     );
     let ended = stream(&mut socket, &state, &hub, subscription, identity.clone()).await;
@@ -294,7 +294,12 @@ async fn heartbeat(
         close(socket, close_code::AWAY, "Ping timeout").await;
         return Err("no answer to ping");
     }
-    match app_passwords::is_active(&state.db, identity.app_password_id, db::unix_now()).await {
+    // Push connections are authenticated with app passwords only; anything else is not active.
+    let active = match identity.app_password_id {
+        Some(id) => app_passwords::is_active(&state.db, id, db::unix_now()).await,
+        None => Ok(false),
+    };
+    match active {
         Ok(true) => {}
         Ok(false) => {
             close(socket, close_code::POLICY, "Credentials revoked").await;
@@ -494,6 +499,7 @@ mod tests {
             trusted_proxies: Arc::new(Vec::new()),
             push: Some(hub),
             admin: None,
+            files: None,
         };
         let app = crate::app::router(state.clone());
         tokio::spawn(async move {

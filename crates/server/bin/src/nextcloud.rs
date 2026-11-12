@@ -164,12 +164,15 @@ pub async fn ocs(
         // Other accounts are not revealed, not even whether they exist.
         Endpoint::User(_) => reply(version, format, &Outcome::NotFound, json!([])),
         Endpoint::RevokeAppPassword => {
-            match app_passwords::delete(&state.db, identity.user_id, identity.app_password_id).await
-            {
+            // The OCS routes authenticate app passwords only, so there is always one.
+            let Some(app_password_id) = identity.app_password_id else {
+                return reply(version, format, &Outcome::NotFound, json!([]));
+            };
+            match app_passwords::delete(&state.db, identity.user_id, app_password_id).await {
                 Ok(_) => {
                     tracing::info!(
                         user = %identity.username,
-                        app_password = identity.app_password_id,
+                        app_password = app_password_id,
                         "app password revoked by its device"
                     );
                     reply(version, format, &Outcome::Ok, json!([]))

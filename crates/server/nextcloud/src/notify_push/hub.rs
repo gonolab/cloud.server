@@ -428,7 +428,7 @@ mod tests {
             user_id,
             username: Username::new(format!("user{user_id}")).unwrap(),
             display_name: String::new(),
-            app_password_id: user_id * 10,
+            app_password_id: Some(user_id * 10),
             mounts: vec![Mount {
                 mount_path: RelPath::root(),
                 storage_path: RelPath::root(),

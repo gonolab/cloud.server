@@ -202,7 +202,7 @@ mod tests {
             user_id: 1,
             username: Username::new("alice").unwrap(),
             display_name: "Alice".into(),
-            app_password_id: 1,
+            app_password_id: Some(1),
             mounts: mounts
                 .iter()
                 .enumerate()

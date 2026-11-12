@@ -6,7 +6,22 @@
 use askama::Template;
 use gono_server_core::{app_passwords::Scope, db};
 
-use crate::commands::output::format_time;
+use crate::{
+    commands::output::format_time,
+    web::{Chrome, page},
+};
+
+page!(
+    LoginPage<'_>,
+    NotAdminPage<'_>,
+    MessagePage,
+    OverviewPage,
+    UsersPage,
+    NewUserPage,
+    UserPage,
+    CreatedPage,
+    DeletePage,
+);
 
 /// What every page of the signed-in admin UI shows around its content.
 #[derive(Debug, Clone)]
@@ -17,8 +32,6 @@ pub struct Frame {
     pub on_overview: bool,
     /// Highlight "Users" in the navigation.
     pub on_users: bool,
-    /// The signed-in admin.
-    pub username: String,
     /// CSRF token of the session, for every form.
     pub csrf: String,
     /// Server version.
@@ -33,6 +46,7 @@ pub struct Frame {
 #[derive(Template)]
 #[template(path = "admin/login.html")]
 pub struct LoginPage<'a> {
+    pub chrome: Chrome,
     pub prefix: &'a str,
     pub csrf: &'a str,
     pub user: &'a str,
@@ -43,6 +57,7 @@ pub struct LoginPage<'a> {
 #[derive(Template)]
 #[template(path = "admin/not_admin.html")]
 pub struct NotAdminPage<'a> {
+    pub chrome: Chrome,
     pub prefix: &'a str,
     pub csrf: &'a str,
     pub username: &'a str,
@@ -52,6 +67,7 @@ pub struct NotAdminPage<'a> {
 #[derive(Template)]
 #[template(path = "admin/message.html")]
 pub struct MessagePage {
+    pub chrome: Chrome,
     pub frame: Frame,
     pub heading: String,
     pub lead: String,
@@ -79,6 +95,7 @@ pub struct Feature {
 #[derive(Template)]
 #[template(path = "admin/overview.html")]
 pub struct OverviewPage {
+    pub chrome: Chrome,
     pub frame: Frame,
     pub host: String,
     pub uptime: String,
@@ -121,6 +138,7 @@ pub struct UserRow {
 #[derive(Template)]
 #[template(path = "admin/users.html")]
 pub struct UsersPage {
+    pub chrome: Chrome,
     pub frame: Frame,
     pub notice: Option<String>,
     pub summary: String,
@@ -131,6 +149,7 @@ pub struct UsersPage {
 #[derive(Template)]
 #[template(path = "admin/new_user.html")]
 pub struct NewUserPage {
+    pub chrome: Chrome,
     pub frame: Frame,
     pub error: Option<String>,
     pub username: String,
@@ -215,6 +234,7 @@ impl Default for AppPasswordForm {
 #[derive(Template)]
 #[template(path = "admin/user.html")]
 pub struct UserPage {
+    pub chrome: Chrome,
     pub frame: Frame,
     /// `<prefix>/users/<username>`.
     pub base: String,
@@ -231,6 +251,7 @@ pub struct UserPage {
 #[derive(Template)]
 #[template(path = "admin/created.html")]
 pub struct CreatedPage {
+    pub chrome: Chrome,
     pub frame: Frame,
     pub username: String,
     pub label: String,
@@ -244,6 +265,7 @@ pub struct CreatedPage {
 #[derive(Template)]
 #[template(path = "admin/delete.html")]
 pub struct DeletePage {
+    pub chrome: Chrome,
     pub frame: Frame,
     pub base: String,
     pub username: String,

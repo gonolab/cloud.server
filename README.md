@@ -11,8 +11,8 @@ clients can use it: users and app passwords, WebDAV under `/remote.php/dav/files
 Nextcloud live properties, ETags and locks, read-only or scoped app passwords, `status.php`,
 capabilities and the OCS user endpoints, favorites with the `filter-files` REPORT, chunked
 upload v2, Login Flow v2 with an explicit consent page, notify_push for real-time change
-notifications, a web admin UI, and `gono-cloud rescan` for files changed directly in the data
-directory. The desktop client is tested with `nextcloudcmd` in CI; the mobile apps with
+notifications, a web file UI and account page in the browser, a web admin UI, and
+`gono-cloud rescan` for files changed directly in the data directory. The desktop client is tested with `nextcloudcmd` in CI; the mobile apps with
 [`docs/mobile-checklist.md`](docs/mobile-checklist.md).
 
 ## Quick start

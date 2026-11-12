@@ -1,18 +1,13 @@
 {%- extends "layout.html" -%}
 {%- block body -%}
-<header class="top"><div class="wrap top-in">
-  <a class="brand" href="{{ frame.prefix }}/"><span class="brand-mark">Gono Cloud</span><span class="brand-sub">Admin</span></a>
-  <nav class="nav">
-    <a href="{{ frame.prefix }}/"{% if frame.on_overview %} aria-current="page"{% endif %}>Overview</a>
-    <a href="{{ frame.prefix }}/users"{% if frame.on_users %} aria-current="page"{% endif %}>Users</a>
-  </nav>
-  <div class="me"><span>Signed in as <b>{{ frame.username }}</b></span>
-    <form method="post" action="{{ frame.prefix }}/logout"><input type="hidden" name="csrf" value="{{ frame.csrf }}"><button class="btn ghost sm" type="submit">Sign out</button></form></div>
-</div></header>
-<main class="wrap">
+<main class="container site-main" id="main" tabindex="-1">
+<nav class="tabs admin-tabs" aria-label="Admin">
+  <a class="tabs__item" href="{{ frame.prefix }}/"{% if frame.on_overview %} aria-current="page"{% endif %}>Overview</a>
+  <a class="tabs__item" href="{{ frame.prefix }}/users"{% if frame.on_users %} aria-current="page"{% endif %}>Users</a>
+</nav>
 {% block content %}{% endblock %}
 </main>
-<footer class="foot"><div class="wrap foot-in">
+<footer class="foot"><div class="container foot-in">
   <span>Gono Cloud <span class="mono">{{ frame.version }}</span> · Nextcloud protocol <span class="mono">{{ frame.nextcloud }}</span> · instance <span class="mono">{{ frame.instance_id }}</span></span>
   <span><a href="https://github.com/gonolab/gono.cloud">Source</a> · MIT OR Apache-2.0</span>
 </div></footer>

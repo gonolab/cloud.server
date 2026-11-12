@@ -211,7 +211,7 @@ impl Harness {
             user_id: self.owner,
             username: Username::new("alice").unwrap(),
             display_name: "Alice".into(),
-            app_password_id: 1,
+            app_password_id: Some(1),
             mounts,
         })
     }

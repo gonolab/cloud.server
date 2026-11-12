@@ -982,3 +982,45 @@ async fn reconcile_fixes_drifted_directory_sizes() {
     assert!(report.added.is_empty() && report.removed.is_empty());
     assert_eq!(store.get(owner, &p("d")).await.unwrap().unwrap().size, 8);
 }
+
+#[tokio::test]
+async fn names_are_searched_by_subtree_ignoring_case() {
+    let f = fixture().await;
+    f.mkdir("Photos").await;
+    f.mkdir("Photos/2026").await;
+    f.mkdir("photo_").await;
+    for path in [
+        "Photos/2026/Beach.JPG",
+        "Photos/notes.txt",
+        "photo_/x.txt",
+        "Über.txt",
+        "50%_off.txt",
+        "500_off.txt",
+    ] {
+        f.write(path, 1).await;
+    }
+    let search = |dir: &'static str, needle: &'static str, limit: usize| {
+        let store = f.store.clone();
+        let owner = f.owner;
+        async move {
+            store
+                .search_names(owner, &p(dir), needle, limit)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|row| row.rel_path.as_str().to_owned())
+                .collect::<Vec<_>>()
+        }
+    };
+
+    // Names only: "Photos/notes.txt" matches "photo" through its folder, not its name.
+    assert_eq!(search("", "PHOTO", 10).await, ["Photos", "photo_"]);
+    assert_eq!(search("", "beach", 10).await, ["Photos/2026/Beach.JPG"]);
+    assert_eq!(search("Photos", "2026", 10).await, ["Photos/2026"]);
+    assert!(search("photo_", "beach", 10).await.is_empty(), "no sibling");
+    // Unicode case and LIKE wildcards are literal.
+    assert_eq!(search("", "über", 10).await, ["Über.txt"]);
+    assert_eq!(search("", "%_", 10).await, ["50%_off.txt"]);
+    assert_eq!(search("", "txt", 2).await.len(), 2, "limit");
+    assert!(search("", "", 10).await.is_empty());
+}

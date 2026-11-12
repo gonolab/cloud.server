@@ -10,6 +10,34 @@ compatible within a major version: released clients keep working with newer serv
 
 ## [Unreleased]
 
+### Added
+
+- A web file UI at `/apps/files/` (`/` leads there), on by default (`files_ui.enabled`). Users
+  sign in at `/login` with their web login password and can browse, sort and search by name,
+  preview images, video, audio and text, download files and folders (folders and selections
+  as streamed `.zip` archives), upload (a form without JavaScript; drag and drop, folders and
+  resumable chunked uploads with it), create folders, rename, move and delete (one or many
+  entries), and mark favorites, which the apps see too. Everything works without JavaScript.
+  Every change is a WebDAV operation of the server itself, so ETags, file ids, locks and
+  notify_push behave as for the clients. User files never open as part of the site: downloads
+  are attachments, and only images, video and audio are shown inline, with a type the server
+  chooses.
+- An account page at `/apps/account/`: users change their display name and web login password
+  (the other browser sessions end) and create, view and revoke their own app passwords.
+- The browser pages follow the browser's language (English or Chinese; the admin UI stays in
+  English) and offer a light, dark or system theme.
+- `/index.php/apps/files/` (Nextcloud's web address, which the apps link to) leads to the web
+  file UI.
+
+### Changed
+
+- The web admin UI is on by default (`admin.enabled = true`). Installations that rely on the old
+  default and do not want it must set `enabled = false` in `[admin]`.
+- Every HTML page (sign-in, Login Flow, admin UI) has a new look and a shared masthead. Pages
+  load one stylesheet and one script from `/apps/assets/` under content-hashed names; the
+  Content-Security-Policy allows exactly that script by a per-response nonce and still no
+  inline styles or scripts.
+
 ## [1.1.1] - 2026-11-11
 
 Security fix for the direct download links added in 1.1.0. Every installation of 1.1.0 should

@@ -100,9 +100,13 @@ pub async fn create_link(
             return Err(StatusCode::INTERNAL_SERVER_ERROR);
         }
     }
+    // Links belong to an app password and end with it; only devices ask for them.
+    let Some(app_password_id) = identity.app_password_id else {
+        return Err(StatusCode::FORBIDDEN);
+    };
     let token = direct_downloads::create(
         &state.db,
-        identity.app_password_id,
+        app_password_id,
         file_id,
         db::unix_now(),
         lifetime,

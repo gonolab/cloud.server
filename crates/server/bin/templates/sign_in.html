@@ -1,0 +1,21 @@
+{%- extends "card.html" -%}
+{%- block title %}{{ chrome.t.sign_in }}{% endblock -%}
+{%- block card %}
+<h1>{{ chrome.t.sign_in }}</h1>
+<p class="muted mt-6">{{ chrome.t.sign_in_lead }}</p>
+{%- if let Some(notice) = notice %}
+<div class="flash ok" role="status">{{ notice }}</div>
+{%- endif %}
+{%- if let Some(error) = error %}
+<div class="flash bad" role="alert">{{ error }}</div>
+{%- endif %}
+<form method="post" action="/login">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <input type="hidden" name="next" value="{{ next }}">
+  <label class="field" for="login-user"><span>{{ chrome.t.username }}</span>
+    <input id="login-user" type="text" name="user" value="{{ user }}" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus></label>
+  <label class="field" for="login-password"><span>{{ chrome.t.password }}</span>
+    <input id="login-password" type="password" name="password" autocomplete="current-password" required></label>
+  <button class="btn primary block" type="submit">{{ chrome.t.sign_in }}</button>
+</form>
+{%- endblock %}

@@ -367,6 +367,103 @@ impl MetaStore {
         Ok(rows.into_iter().map(FileRow::from).collect())
     }
 
+    /// The number of entries strictly below `dir`.
+    pub async fn count_below(&self, owner: i64, dir: &RelPath) -> Result<i64> {
+        let count: (i64,) = match descendant_bounds(dir.as_str()) {
+            Some((lower, upper)) => {
+                sqlx::query_as(
+                    "SELECT COUNT(*) FROM files WHERE owner_id = ?1 \
+                     AND rel_path >= ?2 AND rel_path < ?3",
+                )
+                .bind(owner)
+                .bind(lower)
+                .bind(upper)
+                .fetch_one(&self.pool)
+                .await?
+            }
+            None => {
+                sqlx::query_as("SELECT COUNT(*) FROM files WHERE owner_id = ?1 AND rel_path <> ''")
+                    .bind(owner)
+                    .fetch_one(&self.pool)
+                    .await?
+            }
+        };
+        Ok(count.0)
+    }
+
+    /// Up to `limit` entries strictly below `dir` whose name (last path segment) contains
+    /// `needle`, ignoring case, ordered by path (the web file UI's search).
+    ///
+    /// The subtree is selected by range as everywhere else. For an ASCII needle, a `LIKE` on
+    /// the whole path narrows the rows first (SQLite's `LIKE` ignores ASCII case only); the
+    /// name itself is then compared with full Unicode lowercasing. At most `MAX_SCANNED` rows
+    /// are looked at, so a search of a huge tree stays bounded.
+    pub async fn search_names(
+        &self,
+        owner: i64,
+        dir: &RelPath,
+        needle: &str,
+        limit: usize,
+    ) -> Result<Vec<FileRow>> {
+        const PAGE: i64 = 1000;
+        const MAX_SCANNED: usize = 200_000;
+        let needle = needle.to_lowercase();
+        if needle.is_empty() || limit == 0 {
+            return Ok(Vec::new());
+        }
+        let (lower, upper) = descendant_bounds(dir.as_str())
+            .unwrap_or_else(|| (String::new(), "\u{10ffff}".to_owned()));
+        // `%`, `_` and the escape character itself are literal in the needle.
+        let pattern = needle.is_ascii().then(|| {
+            let mut pattern = String::from("%");
+            for ch in needle.chars() {
+                if matches!(ch, '%' | '_' | '\\') {
+                    pattern.push('\\');
+                }
+                pattern.push(ch);
+            }
+            pattern.push('%');
+            pattern
+        });
+        let sql = format!(
+            "SELECT {COLUMNS} FROM files WHERE owner_id = ?1 AND rel_path > ?2 AND rel_path < ?3 \
+             AND rel_path <> '' AND (?4 IS NULL OR rel_path LIKE ?4 ESCAPE '\\') \
+             ORDER BY rel_path LIMIT ?5"
+        );
+        let mut found = Vec::new();
+        let mut after = lower.clone();
+        let mut scanned = 0;
+        loop {
+            let rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(sql.clone()))
+                .bind(owner)
+                .bind(&after)
+                .bind(&upper)
+                .bind(pattern.as_deref())
+                .bind(PAGE)
+                .fetch_all(&self.pool)
+                .await?;
+            let count = rows.len();
+            scanned += count;
+            for row in rows {
+                let row = FileRow::from(row);
+                after = row.rel_path.as_str().to_owned();
+                let matches = row
+                    .rel_path
+                    .file_name()
+                    .is_some_and(|name| name.to_lowercase().contains(&needle));
+                if matches {
+                    found.push(row);
+                    if found.len() == limit {
+                        return Ok(found);
+                    }
+                }
+            }
+            if count < PAGE as usize || scanned >= MAX_SCANNED {
+                return Ok(found);
+            }
+        }
+    }
+
     /// The favorites strictly below `dir` (and `dir` itself when `include_dir` is set), ordered
     /// by path. Served by the partial index `files_favorites`.
     pub async fn favorites(

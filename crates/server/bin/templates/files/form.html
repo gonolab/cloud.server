@@ -1,0 +1,51 @@
+{%- extends "files/frame.html" -%}
+{%- block title %}{{ title }}{% endblock -%}
+{%- block content %}
+<section class="pane narrow"><div class="panel-body">
+  <nav class="breadcrumb" aria-label="{{ chrome.t.folder }}">
+    {%- for crumb in crumbs %}<a href="{{ crumb.href }}">{{ crumb.name }}</a><span class="sep" aria-hidden="true">/</span>{% endfor %}
+  </nav>
+  <h1>{{ title }}</h1>
+  {%- if let Some(lead) = lead %}
+  <p class="muted mt-6">{{ lead }}</p>
+  {%- endif %}
+  {%- if let Some(error) = error %}
+  <div class="flash bad mt-18" role="alert">{{ error }}</div>
+  {%- endif %}
+  {%- if action == "mkdir" %}
+  <form class="mt-18" method="post" action="{{ dir_href }}">
+    <input type="hidden" name="csrf" value="{{ chrome.csrf }}"><input type="hidden" name="action" value="mkdir">
+    <label class="field" for="mkdir-name"><span>{{ chrome.t.folder_name }}</span>
+      <input id="mkdir-name" type="text" name="name" required maxlength="255" autofocus></label>
+    <div class="actions"><button class="btn primary" type="submit">{{ chrome.t.create }}</button><a class="btn ghost" href="{{ dir_href }}">{{ chrome.t.cancel }}</a></div>
+  </form>
+  {%- else if action == "upload" %}
+  <form class="mt-18 upload-form" method="post" action="{{ dir_href }}?upload" enctype="multipart/form-data">
+    <input type="hidden" name="csrf" value="{{ chrome.csrf }}">
+    <input type="file" name="file" multiple required aria-label="{{ chrome.t.choose_files }}">
+    <label class="check"><input type="checkbox" name="replace" value="1"><span>{{ chrome.t.replace_existing }}</span></label>
+    <div class="actions"><button class="btn primary" type="submit">{{ chrome.t.upload }}</button><a class="btn ghost" href="{{ dir_href }}">{{ chrome.t.cancel }}</a></div>
+  </form>
+  {%- else if action == "rename" %}
+  <form class="mt-18" method="post" action="{{ dir_href }}">
+    <input type="hidden" name="csrf" value="{{ chrome.csrf }}"><input type="hidden" name="action" value="rename">
+    {%- for item in items %}<input type="hidden" name="item" value="{{ item }}">{% endfor %}
+    <label class="field" for="rename-name"><span>{{ chrome.t.new_name }}</span>
+      <input id="rename-name" type="text" name="name" value="{{ name }}" required maxlength="255" autofocus></label>
+    <div class="actions"><button class="btn primary" type="submit">{{ chrome.t.rename }}</button><a class="btn ghost" href="{{ dir_href }}">{{ chrome.t.cancel }}</a></div>
+  </form>
+  {%- else if action == "delete" %}
+  <ul class="item-list mt-18">
+    {%- for item in items %}<li>{{ item }}</li>{% endfor %}
+  </ul>
+  {%- if let Some(note) = note %}
+  <p class="muted small">{{ note }}</p>
+  {%- endif %}
+  <form method="post" action="{{ dir_href }}">
+    <input type="hidden" name="csrf" value="{{ chrome.csrf }}"><input type="hidden" name="action" value="delete">
+    {%- for item in items %}<input type="hidden" name="item" value="{{ item }}">{% endfor %}
+    <div class="actions"><button class="btn danger solid" type="submit" name="confirm" value="1">{{ chrome.t.delete }}</button><a class="btn ghost" href="{{ dir_href }}">{{ chrome.t.cancel }}</a></div>
+  </form>
+  {%- endif %}
+</div></section>
+{%- endblock %}

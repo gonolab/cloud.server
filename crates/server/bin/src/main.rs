@@ -7,6 +7,8 @@ mod cli;
 mod client_ip;
 mod commands;
 mod direct;
+mod files;
+mod i18n;
 mod janitor;
 mod logging;
 mod login_flow;
@@ -16,6 +18,7 @@ mod password_input;
 mod ratelimit;
 mod request_log;
 mod shutdown;
+mod site;
 mod web;
 
 use std::process::ExitCode;

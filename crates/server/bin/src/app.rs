@@ -22,6 +22,9 @@
 //! - notify_push, when `notify_push.enabled`: the WebSocket at `/push/ws` and the pre-auth
 //!   endpoint `/index.php/apps/notify_push/pre_auth`: see [`crate::notify_push`].
 //! - The web admin UI under `admin.path`, when `admin.enabled`: see [`crate::admin`].
+//! - The web file UI under `/apps/files/`, when `files_ui.enabled`: see [`crate::files`]; the
+//!   sign-in page `/login`, `/logout`, the theme switch and the assets of every HTML page:
+//!   see [`crate::site`].
 //!
 //! Every response to a WebDAV request passes [`OcHeadersLayer`], which adds the `OC-ETag`,
 //! `OC-FileId` and `X-NC-Permissions` headers, and [`DavPrefixLayer`], which writes the `DAV:`
@@ -61,10 +64,12 @@ use crate::{
     admin::{self, Admin},
     auth::{AuthOutcome, Authenticator, basic_challenge},
     client_ip::client_ip,
-    direct, login_flow, nextcloud, notify_push,
+    direct,
+    files::{self, Files},
+    login_flow, nextcloud, notify_push,
     ratelimit::RateLimiter,
-    request_log,
-    web::Web,
+    request_log, site,
+    web::{self, Web},
 };
 
 /// State shared by all request handlers.
@@ -91,6 +96,8 @@ pub struct AppState {
     pub push: Option<Arc<Hub>>,
     /// The web admin UI, when `admin.enabled`.
     pub admin: Option<Arc<Admin>>,
+    /// The web file UI, when `files_ui.enabled`.
+    pub files: Option<Arc<Files>>,
 }
 
 /// Compresses the XML bodies of WebDAV responses (PROPFIND, REPORT, error documents) when the
@@ -186,6 +193,16 @@ pub fn router(state: AppState) -> Router {
     }
     if let Some(admin) = &state.admin {
         router = router.merge(admin::routes(admin.prefix()));
+    }
+    // The pages every browser UI shares; `/login` and `/logout` answer 404 without the file UI.
+    router = router
+        .route("/", get(site::root))
+        .route("/login", get(site::login_page).post(site::login))
+        .route("/logout", post(site::logout))
+        .route(web::THEME_PATH, post(site::theme))
+        .route("/apps/assets/{name}", get(site::asset));
+    if state.files.is_some() {
+        router = router.merge(files::routes());
     }
     router
         .layer(middleware::from_fn_with_state(
@@ -496,6 +513,7 @@ mod tests {
             trusted_proxies: Arc::new(Vec::new()),
             push: None,
             admin: None,
+            files: None,
         };
         Fixture {
             dir,
@@ -1642,7 +1660,10 @@ mod tests {
             .send("GET", &page, None, &[("Cookie", &session)], "")
             .await;
         assert!(done.body.contains("Access granted"), "{}", done.body);
-        assert!(!done.body.contains("<form"), "nothing left to submit");
+        assert!(
+            !done.body.contains("name=\"action\""),
+            "nothing left to submit"
+        );
 
         let completed = poll().await;
         assert_eq!(completed.status, StatusCode::OK, "{}", completed.body);

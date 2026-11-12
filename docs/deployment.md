@@ -133,18 +133,38 @@ logs to standard output and stops cleanly on SIGTERM within 30 seconds.
 
 `gono-cloud init` creates the database, the data directory layout and one account with the
 admin flag. Its web login password (at least 8 characters) is used in the browser only: for the
-Login Flow consent page and the web admin UI. `init` refuses to run against a database that
-already has accounts.
+web file UI, the Login Flow consent page and the web admin UI. `init` refuses to run against a
+database that already has accounts.
 
 To connect the first device, enter the server address (`https://cloud.example.com`) in a
 Nextcloud client. The client opens the browser, you sign in with the web login password and
 approve the device, and the server creates an app password for that device. Each device gets its
 own app password, which you can revoke on its own.
 
-The web admin UI is off by default. To use it, set `enabled = true` in the `[admin]` section of
-the configuration, restart the service and open `https://cloud.example.com/gono-admin/`. Only
-accounts with the admin flag can sign in. Consider limiting the path to a VPN or office network
-in the reverse proxy ([examples](reverse-proxy.md)).
+## The browser
+
+Opening `https://cloud.example.com/` in a browser leads to the **web file UI** at
+`/apps/files/`. Every user signs in there with their web login password and can browse, search,
+preview, upload (drag and drop, folders, large files in resumable chunks), download (folders as
+`.zip`), create folders, rename, move, delete and mark favorites. The **account page**
+(`/apps/account/`) lets users change their display name and web login password and create or
+revoke their own app passwords, for example for Finder, Windows Explorer or rclone. The pages
+work without JavaScript; with it, uploads and the theme switch need no page reloads. They follow
+the browser's language (English or Chinese) and its light or dark mode.
+
+Changes made in the browser are the same WebDAV operations the clients use, so the apps see
+them at once (notify_push included). Deleting is permanent: there is no trash bin. Files are
+never opened as web pages: downloads are attachments, and only images, video, audio and text are
+previewed. App passwords cannot sign in to the browser, and the browser session cannot be used
+for WebDAV.
+
+The **web admin UI** at `https://cloud.example.com/gono-admin/` (`admin.path`) shows this server
+and manages accounts and app passwords. Only accounts with the admin flag can sign in. Consider
+limiting the path to a VPN or office network in the reverse proxy
+([examples](reverse-proxy.md)).
+
+Both are on by default. To turn one off, set `enabled = false` in the `[files_ui]` or `[admin]`
+section of the configuration and restart the service.
 
 ## Managing accounts
 

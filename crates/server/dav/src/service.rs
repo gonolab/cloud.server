@@ -120,7 +120,7 @@ pub(crate) fn xml_body(status: StatusCode, body: String) -> Response<DavBody> {
 /// download links need no credentials, so without this anyone could send an administrator a
 /// link that runs a page as part of the site. The router adds a sandboxing
 /// `Content-Security-Policy` to the same responses as a second line of defense.
-fn attachment(name: &[u8]) -> HeaderValue {
+pub fn attachment(name: &[u8]) -> HeaderValue {
     if name.is_empty() {
         return HeaderValue::from_static("attachment");
     }

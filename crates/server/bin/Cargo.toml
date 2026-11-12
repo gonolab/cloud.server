@@ -15,10 +15,12 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 askama.workspace = true
-axum.workspace = true
+axum = { workspace = true, features = ["multipart"] }
 base64.workspace = true
 clap.workspace = true
+crc32fast.workspace = true
 dav-server.workspace = true
+futures-util.workspace = true
 gono-server-core.workspace = true
 gono-server-dav.workspace = true
 gono-server-nextcloud.workspace = true

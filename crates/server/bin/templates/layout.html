@@ -1,13 +1,22 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ chrome.lang.tag() }}"{% if let Some(theme) = chrome.theme %} data-theme="{{ theme }}"{% endif %}>
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="referrer" content="same-origin">
+<meta name="robots" content="noindex, nofollow">
+{%- if !chrome.csrf.is_empty() %}
+<meta name="gono-csrf" content="{{ chrome.csrf }}">
+{%- endif %}
 <title>{% block title %}{% endblock %} – Gono Cloud</title>
-<style>{{ crate::web::STYLE|safe }}</style>
+<link rel="icon" href="{{ chrome.icon }}" type="image/svg+xml">
+<link rel="stylesheet" href="{{ chrome.style }}">
+<script src="{{ chrome.script }}" nonce="{{ chrome.nonce }}" defer></script>
+<script type="application/json" id="gono-text" nonce="{{ chrome.nonce }}">{{ chrome.script_text|safe }}</script>
 </head>
 <body>
+<a class="skip-link" href="#main">{{ chrome.t.skip }}</a>
+{% include "masthead.html" %}
 {% block body %}{% endblock %}
 </body>
 </html>

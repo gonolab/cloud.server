@@ -1,0 +1,65 @@
+<header class="masthead">
+  <div class="masthead__inner container">
+    {%- if let Some(user) = chrome.user %}
+    <details class="mobile-nav">
+      <summary class="drawer-toggle" aria-label="{{ chrome.t.menu }}"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></summary>
+      <nav class="drawer" aria-label="{{ chrome.t.menu }}">
+        {%- if chrome.files %}
+        <a href="/apps/files/"{% if chrome.on(1) %} aria-current="page"{% endif %}>{{ chrome.t.files }}</a>
+        <a href="/apps/files/?view=favorites"{% if chrome.on(2) %} aria-current="page"{% endif %}>{{ chrome.t.favorites }}</a>
+        <a href="/apps/account/"{% if chrome.on(3) %} aria-current="page"{% endif %}>{{ chrome.t.account }}</a>
+        {%- endif %}
+        {%- if let Some(admin) = chrome.admin %}
+        <a href="{{ admin }}/"{% if chrome.on(4) %} aria-current="page"{% endif %}>{{ chrome.t.admin }}</a>
+        {%- endif %}
+      </nav>
+    </details>
+    {%- endif %}
+    <a class="masthead__brand" href="{{ chrome.home() }}" translate="no">Gono Cloud</a>
+    {%- if chrome.user.is_some() %}
+    <nav class="masthead__nav" aria-label="{{ chrome.t.menu }}">
+      {%- if chrome.files %}
+      <a class="masthead__link" href="/apps/files/"{% if chrome.on(1) %} aria-current="page"{% endif %}>{{ chrome.t.files }}</a>
+      <a class="masthead__link" href="/apps/files/?view=favorites"{% if chrome.on(2) %} aria-current="page"{% endif %}>{{ chrome.t.favorites }}</a>
+      {%- endif %}
+      {%- if let Some(admin) = chrome.admin %}
+      <a class="masthead__link" href="{{ admin }}/"{% if chrome.on(4) %} aria-current="page"{% endif %}>{{ chrome.t.admin }}</a>
+      {%- endif %}
+    </nav>
+    {%- if chrome.files %}
+    <form class="masthead__search" role="search" method="get" action="/apps/files/">
+      <label class="sr-only" for="site-search">{{ chrome.t.search_files }}</label>
+      <input class="masthead__query" id="site-search" type="search" name="q" placeholder="{{ chrome.t.search }}" maxlength="200" value="{{ chrome.query }}">
+      <button class="masthead__search-button" type="submit" aria-label="{{ chrome.t.search }}"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></svg></button>
+    </form>
+    {%- endif %}
+    {%- endif %}
+    <div class="masthead__tools">
+      <form method="post" action="/apps/theme" data-theme-form>
+        <input type="hidden" name="back" value="{{ chrome.here }}">
+        <button class="theme-switch" type="submit" aria-label="{{ chrome.theme_label }}" title="{{ chrome.t.theme_title }}">
+          <svg class="icon theme-switch__auto" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 0 0 16Z" fill="currentColor"/></svg>
+          <svg class="icon theme-switch__light" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/></svg>
+          <svg class="icon theme-switch__dark" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 13.2A8 8 0 1 1 10.8 4a6.2 6.2 0 0 0 9.2 9.2Z"/></svg>
+        </button>
+      </form>
+      {%- if let Some(user) = chrome.user %}
+      <details class="menu">
+        <summary class="menu__toggle" aria-label="{{ chrome.t.account }}"><span class="avatar" aria-hidden="true">{{ user.initials }}</span><span class="menu__name">{{ user.display_name }}</span></summary>
+        <div class="menu__list">
+          <div class="menu__head"><b>{{ user.display_name }}</b><span>{{ user.username }}</span></div>
+          {%- if chrome.files %}
+          <a class="menu__item" href="/apps/account/">{{ chrome.t.account }}</a>
+          {%- endif %}
+          {%- if let Some(admin) = chrome.admin %}
+          <a class="menu__item" href="{{ admin }}/">{{ chrome.t.admin }}</a>
+          {%- endif %}
+          <form method="post" action="{{ chrome.logout }}"><input type="hidden" name="csrf" value="{{ chrome.csrf }}"><button class="menu__item" type="submit">{{ chrome.t.sign_out }}</button></form>
+        </div>
+      </details>
+      {%- else if chrome.files && chrome.here != "/login" %}
+      <a class="masthead__action masthead__action--primary" href="/login">{{ chrome.t.sign_in }}</a>
+      {%- endif %}
+    </div>
+  </div>
+</header>

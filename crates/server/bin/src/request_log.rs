@@ -25,8 +25,11 @@ const TOKEN_PATHS: &[&str] = &[
     crate::direct::DIRECT_PATH,
 ];
 
-/// Query parameters whose values may be logged.
-const PLAIN_QUERY_PARAMS: &[&str] = &["format"];
+/// Query parameters whose values may be logged. The web file UI's names, search texts and
+/// upload ids stay redacted; its switches carry nothing personal.
+const PLAIN_QUERY_PARAMS: &[&str] = &[
+    "format", "sort", "order", "page", "view", "action", "done", "error", "chunked",
+];
 
 const REDACTED: &str = "<redacted>";
 

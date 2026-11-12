@@ -50,7 +50,7 @@ use rand::RngExt as _;
 use sha2::{Digest, Sha256};
 
 use crate::{
-    ctx::{Ctx, PropfindKind},
+    ctx::{Ctx, PropfindKind, RequestInfo},
     file::{CreatedFile, ReadFile, WriteFile},
     identity::Identity,
     metadata::{DavMeta, Entry, Kind, time_from_ns},
@@ -221,6 +221,51 @@ impl ScopedFs {
             .unwrap_or_else(|e| e.into_inner())
             .insert(owner);
         Ok(())
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // In-process reads (the web file UI)
+    // -----------------------------------------------------------------------------------------
+
+    /// Describes what is at client path `client` of `identity`, as a WebDAV request would see
+    /// it.
+    pub async fn stat(&self, identity: Arc<Identity>, client: &RelPath) -> FsResult<Arc<Entry>> {
+        let ctx = Ctx::new(identity, RequestInfo::new(Method::GET));
+        let location = resolve::resolve_client(ctx.identity(), client.clone())?;
+        self.lookup(&ctx, &location).await
+    }
+
+    /// Describes the collection at client path `client` and lists its children by name,
+    /// exactly as a `PROPFIND` with `Depth: 1` sees them: symbolic links and names that are
+    /// not NFC are left out. A file is refused with `Forbidden`.
+    pub async fn list(
+        &self,
+        identity: Arc<Identity>,
+        client: &RelPath,
+    ) -> FsResult<(Arc<Entry>, Vec<(String, Arc<Entry>)>)> {
+        let ctx = Ctx::new(identity, RequestInfo::new(Method::GET));
+        let location = resolve::resolve_client(ctx.identity(), client.clone())?;
+        let entry = self.lookup(&ctx, &location).await?;
+        if !entry.is_dir() {
+            return Err(FsError::Forbidden);
+        }
+        let children = match &location {
+            Location::Virtual { client } => self.list_virtual(&ctx, client).await?,
+            Location::Storage { .. } => self.list_storage(&ctx, &location).await?,
+        };
+        Ok((entry, children))
+    }
+
+    /// Opens the file at client path `client` for reading, with the same checks as a `GET`.
+    pub async fn open_file(
+        &self,
+        identity: Arc<Identity>,
+        client: &RelPath,
+    ) -> FsResult<Box<dyn DavFile>> {
+        let ctx = Ctx::new(identity, RequestInfo::new(Method::GET));
+        let path = resolve::dav_path(resolve::WEBDAV_ROOT.as_bytes(), client, false)
+            .ok_or(FsError::NotFound)?;
+        self.open_for_read(&ctx, &path).await
     }
 
     // -----------------------------------------------------------------------------------------

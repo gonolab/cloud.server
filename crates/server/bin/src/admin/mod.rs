@@ -18,7 +18,7 @@
 //!
 //! # Security
 //!
-//! - **Sign-in** uses the web login password through [`Web::verify_password`] (Argon2, the
+//! - **Sign-in** uses the web login password through [`Web::verify_password`](crate::web::Web::verify_password) (Argon2, the
 //!   shared failed-attempt limiter) and only accounts with the admin flag get a session. App
 //!   passwords are never looked at, whether sent as Basic credentials or typed into the form.
 //! - **Every page** needs a live session of an enabled admin (checked on each request, so a
@@ -36,6 +36,8 @@
 //!   with.
 
 mod pages;
+
+pub(crate) use self::pages::format_bytes;
 
 use std::{
     collections::HashMap,
@@ -67,15 +69,17 @@ use ipnet::IpNet;
 use secrecy::{ExposeSecret as _, SecretString};
 use serde::Deserialize;
 
+pub(crate) use self::pages::{AppPasswordForm, ScopeChip};
 use self::pages::{
-    AppPasswordForm, AppPasswordRow, CreatedPage, DeletePage, Fact, Feature, Frame, LoginPage,
-    MOUNT_ROWS, MessagePage, MountInput, NewUserPage, NotAdminPage, OverviewPage, ScopeChip,
-    UserPage, UserRow, UserView, UsersPage,
+    AppPasswordRow, CreatedPage, DeletePage, Fact, Feature, Frame, LoginPage, MOUNT_ROWS,
+    MessagePage, MountInput, NewUserPage, NotAdminPage, OverviewPage, UserPage, UserRow, UserView,
+    UsersPage,
 };
 use crate::{
     app::AppState,
     client_ip::client_ip,
-    web::{self, CSRF_COOKIE, SESSION_COOKIE, Verified},
+    i18n::Lang,
+    web::{self, CSRF_COOKIE, Chrome, Nav, SESSION_COOKIE, Verified},
 };
 
 /// How long a new app password waits to be shown.
@@ -162,12 +166,21 @@ impl Admin {
             prefix: self.prefix.clone(),
             on_overview,
             on_users,
-            username: session.user.username.to_string(),
             csrf: session.csrf.clone(),
             version: env!("CARGO_PKG_VERSION"),
             nextcloud: status::version_string(),
             instance_id: self.info.instance_id.clone(),
         }
+    }
+
+    /// The frame of an admin page (English only for now).
+    fn chrome(&self, state: &AppState, headers: &HeaderMap) -> Chrome {
+        let mut chrome = Chrome::new(headers, Lang::En);
+        chrome.nav = Nav::Admin;
+        chrome.files = state.files.is_some();
+        chrome.logout = self.url("/logout");
+        chrome.here = self.url("/");
+        chrome
     }
 
     fn remember(&self, session_id: i64, created: Created) {
@@ -236,6 +249,8 @@ struct Session {
     user: SessionUser,
     token: String,
     csrf: String,
+    /// The frame of the admin's pages.
+    chrome: Chrome,
 }
 
 /// The response a guard sends instead of the page (boxed: a `Response` is large).
@@ -265,15 +280,23 @@ async fn session(state: &AppState, admin: &Admin, headers: &HeaderMap) -> Result
         return Err(Box::new(see_other(&admin.url("/login"))));
     };
     let csrf = state.web.session_csrf(&token);
+    let mut chrome = admin.chrome(state, headers).signed_in(&user, &csrf);
     if !user.is_admin {
         let page = NotAdminPage {
+            chrome,
             prefix: admin.prefix(),
             csrf: &csrf,
             username: user.username.as_str(),
         };
         return Err(Box::new(web::render(StatusCode::FORBIDDEN, &page)));
     }
-    Ok(Session { user, token, csrf })
+    chrome.admin = Some(admin.prefix().to_owned());
+    Ok(Session {
+        user,
+        token,
+        csrf,
+        chrome,
+    })
 }
 
 /// Like [`session`], for form submissions: also checks the origin and the CSRF token.
@@ -295,13 +318,20 @@ async fn form_session(
     Ok(session)
 }
 
+/// The frame of admin pages shown without a session (English, the system theme).
+fn plain_chrome() -> Chrome {
+    Chrome::new(&HeaderMap::new(), Lang::En)
+}
+
 fn blocked(lead: &str) -> Response {
-    web::Message::new("Request blocked", "Request blocked", lead).respond(StatusCode::FORBIDDEN)
+    web::Message::new(plain_chrome(), "Request blocked", "Request blocked", lead)
+        .respond(StatusCode::FORBIDDEN)
 }
 
 fn internal_error(err: &dyn std::fmt::Display) -> Response {
     tracing::error!(error = %err, "admin request failed");
     web::Message::new(
+        plain_chrome(),
         "Error",
         "Something went wrong",
         "The server could not complete the request. The details are in the server log.",
@@ -324,6 +354,7 @@ async fn find_user(
     };
     found.ok_or_else(|| {
         let page = MessagePage {
+            chrome: session.chrome.clone(),
             frame: admin.frame(session, false, true),
             heading: "No such user".to_owned(),
             lead: format!("There is no account named {name}."),
@@ -368,6 +399,7 @@ fn login_form(
 ) -> Response {
     let (csrf, cookie) = state.web.login_csrf(headers);
     let page = LoginPage {
+        chrome: admin.chrome(state, headers),
         prefix: admin.prefix(),
         csrf: &csrf,
         user,
@@ -464,14 +496,8 @@ async fn login(
                 Some(error),
             )
         }
-        Verified::RateLimited(wait) => {
-            let mut response = web::too_many_attempts(wait);
-            if let Ok(value) = HeaderValue::from_str(&wait.as_secs().max(1).to_string()) {
-                response.headers_mut().insert(header::RETRY_AFTER, value);
-            }
-            response
-        }
-        Verified::Unavailable => web::unavailable(),
+        Verified::RateLimited(wait) => web::too_many_attempts(admin.chrome(&state, &headers), wait),
+        Verified::Unavailable => web::unavailable(admin.chrome(&state, &headers)),
     }
 }
 
@@ -536,23 +562,11 @@ async fn overview(State(state): State<AppState>, headers: HeaderMap) -> Response
     let (storage_number, storage_unit) = pages::split_bytes(stats.storage_used);
     let free_of_total = disk.map_or_else(
         || "unknown".to_owned(),
-        |(free, total)| {
-            format!(
-                "{} of {}",
-                pages::format_bytes(free),
-                pages::format_bytes(total)
-            )
-        },
+        |(free, total)| format!("{} of {}", format_bytes(free), format_bytes(total)),
     );
     let disk_note = disk.map_or_else(
         || "Free space unknown".to_owned(),
-        |(free, total)| {
-            format!(
-                "{} free of {}",
-                pages::format_bytes(free),
-                pages::format_bytes(total)
-            )
-        },
+        |(free, total)| format!("{} free of {}", format_bytes(free), format_bytes(total)),
     );
     let push_live = state.push.as_ref().map(|hub| hub.connection_stats());
     let endpoints = state.push.as_ref().map(|_| Endpoints::new(&state.base_url));
@@ -655,6 +669,7 @@ async fn overview(State(state): State<AppState>, headers: HeaderMap) -> Response
     }
 
     let page = OverviewPage {
+        chrome: session.chrome.clone(),
         frame: admin.frame(&session, true, false),
         host: state.base_url.host_str().unwrap_or("Gono Cloud").to_owned(),
         uptime,
@@ -677,10 +692,10 @@ async fn overview(State(state): State<AppState>, headers: HeaderMap) -> Response
         websocket: endpoints.map(|endpoints| endpoints.websocket),
         data_dir: info.data_dir.display().to_string(),
         case_insensitive: info.case_insensitive,
-        storage_used: pages::format_bytes(stats.storage_used),
+        storage_used: format_bytes(stats.storage_used),
         free_of_total,
         db_path: info.db_path.display().to_string(),
-        db_size: pages::format_bytes(db_bytes),
+        db_size: format_bytes(db_bytes),
         features,
         stats,
     };
@@ -736,7 +751,7 @@ async fn users_page(
                 is_admin: user.is_admin,
                 enabled: user.enabled,
                 app_passwords: counts.app_passwords,
-                storage: pages::format_bytes(counts.storage_used),
+                storage: format_bytes(counts.storage_used),
                 created: pages::date(user.created_at),
             }
         })
@@ -748,6 +763,7 @@ async fn users_page(
         _ => None,
     };
     let page = UsersPage {
+        chrome: session.chrome.clone(),
         frame: admin.frame(&session, false, true),
         notice,
         summary,
@@ -766,6 +782,7 @@ async fn new_user_page(State(state): State<AppState>, headers: HeaderMap) -> Res
         Err(halt) => return *halt,
     };
     let page = NewUserPage {
+        chrome: session.chrome.clone(),
         frame: admin.frame(&session, false, true),
         error: None,
         username: String::new(),
@@ -820,6 +837,7 @@ async fn create_user(
     let is_admin = form.admin.is_some();
     let show_error = |error: String| {
         let page = NewUserPage {
+            chrome: session.chrome.clone(),
             frame: admin.frame(&session, false, true),
             error: Some(error),
             username: form.username.trim().to_owned(),
@@ -937,6 +955,7 @@ async fn user_page_response(
         })
         .collect();
     let page = UserPage {
+        chrome: session.chrome.clone(),
         frame: admin.frame(session, false, true),
         base: admin.user_url(user.username.as_str()),
         notice,
@@ -949,7 +968,7 @@ async fn user_page_response(
             enabled: user.enabled,
             created: pages::time(user.created_at),
             updated: pages::time(user.updated_at),
-            storage: pages::format_bytes(storage),
+            storage: format_bytes(storage),
         },
         is_self: user.id == session.user.user_id,
         app_passwords,
@@ -1285,6 +1304,7 @@ async fn delete_confirmation(
             .then(|| "You cannot delete the account you are signed in with.".to_owned())
     });
     let page = DeletePage {
+        chrome: session.chrome.clone(),
         frame: admin.frame(session, false, true),
         base: admin.user_url(user.username.as_str()),
         username: user.username.to_string(),
@@ -1360,18 +1380,18 @@ async fn delete_user(
 
 /// The new app password form. Mount rows are numbered fields (`mount_1`, `storage_1`,
 /// `perm_1`, ...), collected by [`AppPasswordFields::form`].
-struct AppPasswordFields {
-    fields: HashMap<String, String>,
+pub(crate) struct AppPasswordFields {
+    pub(crate) fields: HashMap<String, String>,
 }
 
 impl AppPasswordFields {
-    fn field(&self, name: &str) -> String {
+    pub(crate) fn field(&self, name: &str) -> String {
         self.fields
             .get(name)
             .map_or_else(String::new, |value| value.trim().to_owned())
     }
 
-    fn form(&self) -> AppPasswordForm {
+    pub(crate) fn form(&self) -> AppPasswordForm {
         AppPasswordForm {
             label: self.field("label"),
             expires_in_days: self.field("expires_in_days"),
@@ -1391,7 +1411,7 @@ impl AppPasswordFields {
 }
 
 /// Validates the form: label, expiry and scopes.
-fn parse_app_password(
+pub(crate) fn parse_app_password(
     form: &AppPasswordForm,
     now: i64,
 ) -> Result<(String, Vec<Scope>, Option<i64>), String> {
@@ -1509,6 +1529,7 @@ async fn created_page(State(state): State<AppState>, headers: HeaderMap) -> Resp
     };
     let Some(created) = admin.take(session.user.session_id) else {
         let page = MessagePage {
+            chrome: session.chrome.clone(),
             frame: admin.frame(&session, false, true),
             heading: "Nothing to show".to_owned(),
             lead: "A new app password is shown only once, right after it was created. Create \
@@ -1520,6 +1541,7 @@ async fn created_page(State(state): State<AppState>, headers: HeaderMap) -> Resp
         return web::render(StatusCode::GONE, &page);
     };
     let page = CreatedPage {
+        chrome: session.chrome.clone(),
         frame: admin.frame(&session, false, true),
         username: created.username,
         label: created.label,

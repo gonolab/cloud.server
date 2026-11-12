@@ -1,0 +1,86 @@
+{%- extends "files/frame.html" -%}
+{%- block title %}{{ chrome.t.account_title }}{% endblock -%}
+{%- block content %}
+{%- if let Some(notice) = notice %}
+<div class="flash ok" role="status">{{ notice }}</div>
+{%- endif %}
+{%- if let Some(error) = error %}
+<div class="flash bad" role="alert">{{ error }}</div>
+{%- endif %}
+<div class="page-head"><div><h1>{{ chrome.t.account_title }}</h1><p class="sub"><span class="mono">{{ username }}</span></p></div></div>
+<div class="grid">
+  <div class="stack">
+    <section class="panel" aria-labelledby="devices-title">
+      <div class="panel-head"><div><h2 id="devices-title">{{ chrome.t.devices }}</h2><p class="muted small">{{ chrome.t.devices_note }}</p></div></div>
+      {%- if devices.is_empty() %}
+      <div class="empty">{{ chrome.t.no_devices }}</div>
+      {%- else %}
+      <div class="table-wrap"><table>
+        <thead><tr><th>{{ chrome.t.label }}</th><th>{{ chrome.t.access }}</th><th>{{ chrome.t.last_used }}</th><th class="end"></th></tr></thead>
+        <tbody>
+        {%- for device in devices %}
+          <tr><td><b>{{ device.label }}</b><div class="muted small nowrap">{{ device.created }}</div></td>
+            <td><div class="chips">{% for scope in device.scopes %}<span class="chip">{{ scope.mount }} → {{ scope.storage }} <span class="perm">{{ scope.permission }}</span></span>{% endfor %}</div></td>
+            <td class="num">{{ device.last_used }}<div class="muted small">{{ device.expiry }}</div></td>
+            <td class="end"><form method="post" action="/apps/account/app-passwords/{{ device.id }}/delete"><input type="hidden" name="csrf" value="{{ chrome.csrf }}"><button class="btn danger sm" type="submit">{{ chrome.t.revoke }}</button></form></td></tr>
+        {%- endfor %}
+        </tbody>
+      </table></div>
+      {%- endif %}
+    </section>
+    <section class="panel" aria-labelledby="new-title">
+      <div class="panel-head"><div><h2 id="new-title">{{ chrome.t.new_app_password }}</h2><p class="muted small">{{ chrome.t.new_app_password_note }}</p></div></div>
+      <div class="panel-body">
+        <form method="post" action="/apps/account/app-passwords">
+          <input type="hidden" name="csrf" value="{{ chrome.csrf }}">
+          <div class="row">
+            <label class="field" for="ap-label"><span>{{ chrome.t.label }}</span><input id="ap-label" type="text" name="label" value="{{ form.label }}" required maxlength="100" placeholder="Laptop"></label>
+            <label class="field" for="ap-expires"><span>{{ chrome.t.expires_after }}</span><input id="ap-expires" type="number" name="expires_in_days" value="{{ form.expires_in_days }}" min="1" max="3650" placeholder="{{ chrome.t.never }}"></label>
+          </div>
+          <fieldset class="scope"><legend>{{ chrome.t.access }}</legend>
+            <div class="choices">
+              <label class="choice" for="scope-full"><input id="scope-full" type="radio" name="access" value="full"{% if form.access == "full" %} checked{% endif %}><span><b>{{ chrome.t.access_full }}</b><span>{{ chrome.t.access_full_note }}</span></span></label>
+              <label class="choice" for="scope-view"><input id="scope-view" type="radio" name="access" value="view"{% if form.access == "view" %} checked{% endif %}><span><b>{{ chrome.t.access_view }}</b><span>{{ chrome.t.access_view_note }}</span></span></label>
+              <label class="choice" for="scope-custom"><input id="scope-custom" type="radio" name="access" value="custom"{% if form.access == "custom" %} checked{% endif %}><span><b>{{ chrome.t.access_custom }}</b><span>{{ chrome.t.access_custom_note }}</span></span></label>
+            </div>
+            <div class="mounts">
+              <div class="mount-head"><span>{{ chrome.t.mount_as }}</span><span>{{ chrome.t.mount_folder }}</span><span>{{ chrome.t.access }}</span></div>
+              {%- for mount in form.mounts %}
+              <div class="mount-row">
+                <input id="mount-{{ loop.index }}" class="mono-input" type="text" name="mount_{{ loop.index }}" value="{{ mount.mount }}" placeholder="/Photos" aria-label="{{ chrome.t.mount_as }} {{ loop.index }}">
+                <input id="storage-{{ loop.index }}" class="mono-input" type="text" name="storage_{{ loop.index }}" value="{{ mount.storage }}" placeholder="/Media/Photos" aria-label="{{ chrome.t.mount_folder }} {{ loop.index }}">
+                <select id="perm-{{ loop.index }}" name="perm_{{ loop.index }}" aria-label="{{ chrome.t.access }} {{ loop.index }}"><option value="view"{% if mount.permission != "full" %} selected{% endif %}>view</option><option value="full"{% if mount.permission == "full" %} selected{% endif %}>full</option></select>
+              </div>
+              {%- endfor %}
+            </div>
+          </fieldset>
+          <button class="btn primary" type="submit">{{ chrome.t.create_app_password }}</button>
+        </form>
+      </div>
+    </section>
+  </div>
+  <div class="stack">
+    <section class="panel"><div class="panel-body">
+      <h2>{{ chrome.t.profile }}</h2>
+      <p class="muted small">{{ chrome.t.display_name_note }}</p>
+      <form method="post" action="/apps/account/display-name">
+        <input type="hidden" name="csrf" value="{{ chrome.csrf }}">
+        <label class="field" for="dn-name"><span>{{ chrome.t.display_name }}</span><input id="dn-name" type="text" name="display_name" value="{{ display_name }}" required maxlength="255"></label>
+        <button class="btn block" type="submit">{{ chrome.t.save }}</button>
+      </form>
+    </div></section>
+    <section class="panel"><div class="panel-body">
+      <h2>{{ chrome.t.web_password }}</h2>
+      <p class="muted small">{{ chrome.t.web_password_note }}</p>
+      <form method="post" action="/apps/account/password">
+        <input type="hidden" name="csrf" value="{{ chrome.csrf }}">
+        <input type="text" name="username" value="{{ username }}" autocomplete="username" hidden>
+        <label class="field" for="pw-current"><span>{{ chrome.t.current_password }}</span><input id="pw-current" type="password" name="current" autocomplete="current-password" required></label>
+        <label class="field" for="pw-new"><span>{{ chrome.t.new_password }}</span><input id="pw-new" type="password" name="password" autocomplete="new-password" required minlength="8"></label>
+        <label class="field" for="pw-repeat"><span>{{ chrome.t.repeat_password }}</span><input id="pw-repeat" type="password" name="password_repeat" autocomplete="new-password" required minlength="8"></label>
+        <button class="btn block" type="submit">{{ chrome.t.change_password }}</button>
+      </form>
+    </div></section>
+  </div>
+</div>
+{%- endblock %}

@@ -1,0 +1,18 @@
+{%- extends "files/frame.html" -%}
+{%- block title %}{{ chrome.t.app_password_created }}{% endblock -%}
+{%- block content %}
+<section class="panel narrow"><div class="panel-body">
+  <h1>{{ chrome.t.app_password_created }}</h1>
+  <p class="muted mt-6">{{ chrome.t.app_password_created_lead }}</p>
+  <div class="secret">{{ token }}</div>
+  <dl class="facts mt-18">
+    <dt>{{ chrome.t.username }}</dt><dd class="mono">{{ username }}</dd>
+    <dt>{{ chrome.t.label }}</dt><dd>{{ label }}</dd>
+    <dt>{{ chrome.t.access }}</dt><dd><div class="chips">{% for scope in scopes %}<span class="chip">{{ scope.mount }} → {{ scope.storage }} <span class="perm">{{ scope.permission }}</span></span>{% endfor %}</div></dd>
+    <dt>{{ chrome.t.expires_after }}</dt><dd>{{ expiry }}</dd>
+    <dt>{{ chrome.t.server }}</dt><dd class="mono">{{ server }}</dd>
+    <dt>{{ chrome.t.webdav_address }}</dt><dd class="mono">{{ webdav }}</dd>
+  </dl>
+  <div class="actions mt-20"><a class="btn primary" href="/apps/account/">{{ chrome.t.done }}</a></div>
+</div></section>
+{%- endblock %}

@@ -34,7 +34,8 @@ use serde::Deserialize;
 use crate::{
     app::AppState,
     client_ip::client_ip,
-    web::{self, CSRF_COOKIE, Message, SESSION_COOKIE, SignIn},
+    i18n::{Lang, Text, fill},
+    web::{self, CSRF_COOKIE, Chrome, Message, SESSION_COOKIE, SignIn, page},
 };
 
 fn json(status: StatusCode, value: &serde_json::Value) -> Response {
@@ -174,6 +175,7 @@ pub struct PageForm {
 #[derive(Template)]
 #[template(path = "login_flow/sign_in.html")]
 struct SignInPage<'a> {
+    chrome: Chrome,
     client: &'a str,
     csrf: &'a str,
     error: Option<&'a str>,
@@ -183,34 +185,48 @@ struct SignInPage<'a> {
 #[derive(Template)]
 #[template(path = "login_flow/consent.html")]
 struct ConsentPage<'a> {
+    chrome: Chrome,
     client: &'a str,
     account: String,
+    /// "Not `<account>`?"
+    not_you: String,
     csrf: &'a str,
 }
 
-fn expired_page() -> Response {
+page!(SignInPage<'_>, ConsentPage<'_>);
+
+fn expired_page(headers: &HeaderMap) -> Response {
+    let chrome = Chrome::for_request(headers);
+    let t = chrome.t;
     Message::new(
-        "Link expired",
-        "This link has expired",
-        "The sign-in request was already used, cancelled or is too old. Start the sign-in \
-         again in your app.",
+        chrome,
+        t.link_expired,
+        t.link_expired_heading,
+        t.link_expired_lead,
     )
     .respond(StatusCode::NOT_FOUND)
 }
 
-fn done_page(client: &str) -> Response {
+fn done_page(headers: &HeaderMap, client: &str) -> Response {
+    let chrome = Chrome::for_request(headers);
+    let t = chrome.t;
     let mut page = Message::new(
-        "Access granted",
-        "Access granted",
-        "is now connected to your account.",
+        chrome,
+        t.access_granted,
+        t.access_granted,
+        t.access_granted_lead,
     );
     page.client = Some(client.to_owned());
-    page.note = Some("You can close this window and return to the app.".to_owned());
+    page.note = Some(t.close_and_return.to_owned());
     page.respond(StatusCode::OK)
 }
 
-fn blocked_page(lead: &str) -> Response {
-    Message::new("Request blocked", "Request blocked", lead).respond(StatusCode::FORBIDDEN)
+/// The refusal of a form; `lead` picks the text.
+fn blocked_page(headers: &HeaderMap, lead: fn(&Text) -> &'static str) -> Response {
+    let chrome = Chrome::for_request(headers);
+    let t = chrome.t;
+    Message::new(chrome, t.request_blocked, t.request_blocked, lead(t))
+        .respond(StatusCode::FORBIDDEN)
 }
 
 fn login_page(
@@ -222,6 +238,7 @@ fn login_page(
 ) -> Response {
     let (csrf, cookie) = state.web.login_csrf(headers);
     let page = SignInPage {
+        chrome: Chrome::for_request(headers),
         client,
         csrf: &csrf,
         error: message,
@@ -233,6 +250,7 @@ fn login_page(
 
 fn consent_page(
     state: &AppState,
+    headers: &HeaderMap,
     client: &str,
     session: &(gono_server_core::web_sessions::SessionUser, String),
 ) -> Response {
@@ -243,11 +261,15 @@ fn consent_page(
         format!("{} ({})", user.display_name, user.username)
     };
     let csrf = state.web.session_csrf(token);
+    let chrome = Chrome::for_request(headers);
+    let not_you = fill(chrome.t.not_you, &[&account]);
     web::render(
         StatusCode::OK,
         &ConsentPage {
+            chrome,
             client,
             account,
+            not_you,
             csrf: &csrf,
         },
     )
@@ -276,17 +298,17 @@ pub async fn page(
 ) -> Response {
     let flow = match login_flows::find(&state.db, &token, db::unix_now()).await {
         Ok(Some(flow)) => flow,
-        Ok(None) => return expired_page(),
+        Ok(None) => return expired_page(&headers),
         Err(err) => {
             tracing::error!(error = %err, "Login Flow v2 lookup failed");
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     };
     if flow.granted_user_id.is_some() {
-        return done_page(&flow.client_name);
+        return done_page(&headers, &flow.client_name);
     }
     match state.web.session(&headers).await {
-        Some(session) => consent_page(&state, &flow.client_name, &session),
+        Some(session) => consent_page(&state, &headers, &flow.client_name, &session),
         None => login_page(&state, &headers, StatusCode::OK, &flow.client_name, None),
     }
 }
@@ -301,17 +323,18 @@ pub async fn submit(
     Form(form): Form<PageForm>,
 ) -> Response {
     if !state.web.same_origin(&headers) {
-        return blocked_page("This form was sent from another site.");
+        return blocked_page(&headers, |t| t.from_other_site);
     }
     let flow = match login_flows::find(&state.db, &token, db::unix_now()).await {
         Ok(Some(flow)) => flow,
-        Ok(None) => return expired_page(),
+        Ok(None) => return expired_page(&headers),
         Err(err) => {
             tracing::error!(error = %err, "Login Flow v2 lookup failed");
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     };
     let client = client_ip(peer.ip(), &headers, &state.trusted_proxies);
+    let t = Lang::from_headers(&headers).t();
 
     if form.action == "login" {
         if !state.web.check_login_csrf(&headers, &form.csrf) {
@@ -320,7 +343,7 @@ pub async fn submit(
                 &headers,
                 StatusCode::FORBIDDEN,
                 &flow.client_name,
-                Some("The form has expired. Please sign in again."),
+                Some(t.form_expired_sign_in),
             );
         }
         let password = SecretString::from(form.password);
@@ -337,14 +360,12 @@ pub async fn submit(
                 &headers,
                 StatusCode::FORBIDDEN,
                 &flow.client_name,
-                Some("Wrong username or password."),
+                Some(t.wrong_password),
             ),
             SignIn::RateLimited(wait) => {
-                let mut response = web::too_many_attempts(wait);
-                retry_after(&mut response, wait.as_secs());
-                response
+                web::too_many_attempts(Chrome::for_request(&headers), wait)
             }
-            SignIn::Unavailable => web::unavailable(),
+            SignIn::Unavailable => web::unavailable(Chrome::for_request(&headers)),
         };
     }
 
@@ -354,14 +375,14 @@ pub async fn submit(
             &headers,
             StatusCode::FORBIDDEN,
             &flow.client_name,
-            Some("Your session has ended. Please sign in again."),
+            Some(t.session_ended),
         );
     };
     if !state.web.check_session_csrf(&session.1, &form.csrf) {
-        return blocked_page("The form has expired. Reload the page and try again.");
+        return blocked_page(&headers, |t| t.form_expired);
     }
     if flow.granted_user_id.is_some() {
-        return done_page(&flow.client_name);
+        return done_page(&headers, &flow.client_name);
     }
     let user = &session.0;
     match form.action.as_str() {
@@ -386,20 +407,27 @@ pub async fn submit(
                 tracing::error!(error = %err, "cannot cancel a Login Flow v2 sign-in");
             }
             tracing::info!(%client, user = %user.username, "Login Flow v2 access denied");
+            let chrome = Chrome::for_request(&headers);
             let mut page = Message::new(
-                "Access denied",
-                "Access denied",
-                "did not get access to your account.",
+                chrome,
+                t.access_denied,
+                t.access_denied,
+                t.access_denied_lead,
             );
             page.client = Some(flow.client_name.clone());
-            page.note = Some("You can close this window.".to_owned());
+            page.note = Some(t.close_window.to_owned());
             page.respond(StatusCode::OK)
         }
         "logout" => {
             state.web.sign_out(&session.1).await;
             back_to(&uri, &[state.web.removal_cookie(SESSION_COOKIE)])
         }
-        _ => Message::new("Bad request", "Bad request", "Unknown action.")
-            .respond(StatusCode::BAD_REQUEST),
+        _ => Message::new(
+            Chrome::for_request(&headers),
+            t.bad_request,
+            t.bad_request,
+            t.unknown_action,
+        )
+        .respond(StatusCode::BAD_REQUEST),
     }
 }

@@ -276,8 +276,8 @@ let ep = iroh::Endpoint::builder(presets::Minimal)          // a crypto provider
     .alpns(vec![ALPN.to_vec()])
     .dns_resolver(dns)
     .clear_ip_transports()                                  // drops the default sockets of both families
-    .bind_addr("0.0.0.0:24850")?                            // fixed port, as today
-    .bind_addr("[::]:24850")?                               // IPv6 too: one call per address family
+    .bind_addr("0.0.0.0:0")?                                // stage 1: any free port; stage 2: 24850
+    .bind_addr("[::]:0")?                                   // IPv6 too: one call per address family
     .relay_mode(RelayMode::custom([our_relay_url]))         // remote endpoint only
     .bind().await?;
 ```
@@ -291,6 +291,10 @@ Rules:
   path. IPv6 is common on mobile and home broadband networks in China and usually needs no NAT
   traversal, only a firewall hole, so it matters for the direct rate (V8). `bind_addr` is called
   at most once per address family; a second call for the same family gives undefined routing.
+- Ports by stage. In stage 1 the LAN quinn endpoint keeps UDP 24850, so the remote endpoint
+  binds port 0 and the OS picks a free port: hole punching and relaying need no fixed port. In
+  stage 2 the single endpoint binds 24850 as today. Firewall rules that allow the program, not a
+  port, cover both stages (V3).
 - The LAN-only endpoint has no relay and no address lookup.
 - The portmapper (D3) talks only to the local gateway (UPnP, NAT-PMP, PCP). V4 is run again with
   it on before it ships.

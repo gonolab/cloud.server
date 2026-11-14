@@ -275,7 +275,9 @@ let dns = iroh::dns::DnsResolver::builder()
 let ep = iroh::Endpoint::builder(presets::Minimal)          // a crypto provider only
     .alpns(vec![ALPN.to_vec()])
     .dns_resolver(dns)
-    .clear_ip_transports().bind_addr("0.0.0.0:24850")?      // fixed port, as today
+    .clear_ip_transports()                                  // drops the default sockets of both families
+    .bind_addr("0.0.0.0:24850")?                            // fixed port, as today
+    .bind_addr("[::]:24850")?                               // IPv6 too: one call per address family
     .relay_mode(RelayMode::custom([our_relay_url]))         // remote endpoint only
     .bind().await?;
 ```
@@ -284,6 +286,11 @@ Rules:
 - Never `presets::N0`, `n0_dns()` or any other constructor that points at n0's services.
 - `disable_fallback()` is required. Without it the resolver falls back to Cloudflare, Google and
   Quad9 (UDP 53, DoT, DoH) whenever the system resolver fails or cannot be read.
+- Bind both address families. `clear_ip_transports()` removes the IPv4 and the IPv6 socket that
+  the builder sets up by default, so an endpoint that binds only `0.0.0.0` gives up every IPv6
+  path. IPv6 is common on mobile and home broadband networks in China and usually needs no NAT
+  traversal, only a firewall hole, so it matters for the direct rate (V8). `bind_addr` is called
+  at most once per address family; a second call for the same family gives undefined routing.
 - The LAN-only endpoint has no relay and no address lookup.
 - The portmapper (D3) talks only to the local gateway (UPnP, NAT-PMP, PCP). V4 is run again with
   it on before it ships.
@@ -295,9 +302,10 @@ Rules:
 ### 3.6 Deployment
 
 **Self-hosted, one host.**
-- `gono-cloud serve` includes the relay; `gono-cloud relay` runs it on its own.
+- `gono-cloud serve` includes the relay; `gono-cloud relay` runs it on its own. Both read a
+  `[relay]` section of the configuration.
 - The relay runs in plain-HTTP mode behind nginx or Caddy, which terminates TLS and forwards
-  WebSocket upgrades on `/relay`.
+  WebSocket upgrades on `/relay`. The relay's HTTP listener stays on loopback.
 - iroh-relay 1.4.1 cannot sit under a URL path prefix, so it gets its own host name (for example
   `relay.example.com`).
 - QUIC address discovery (QAD) needs the relay's own TLS certificate and public UDP 7842.
@@ -305,6 +313,27 @@ Rules:
 - Devices need outbound TCP 443 and UDP 7842.
 - The existing systemd hardening applies unchanged: UDP is allowed, and ports above 1024 need no
   privileges.
+
+**What this means for self-hosting.**
+- **A second host name.** Remote access needs the relay's host name in DNS, a certificate for it,
+  and UDP 7842 open in the firewall. The install script gets a `--relay-host` option,
+  `docs/reverse-proxy.md` and `docs/deployment.md` get relay sections, and
+  `gono-cloud config check` validates the relay settings. Without a relay host, gono-cloud runs
+  as today and remote access is unavailable.
+- **A public UDP socket.** QAD binds a public address. The `[relay]` section names that address
+  itself; `server.allow_non_loopback_bind` keeps covering only the HTTP listener.
+- **The certificate for QAD.** nginx owns the relay host's certificate, and the service user
+  cannot read it: certbot keeps private keys readable by root only. A renewal hook copies the
+  certificate and key into a directory the service can read (for example
+  `/etc/gono-cloud/relay-tls/`, owned by root, group `gono-cloud`, mode 0640, like the
+  configuration file), and the relay reloads them on an interval through iroh-relay's
+  `reloading_resolver`. The relay's built-in ACME is no simple alternative: as far as its
+  documentation shows, its challenges are answered on ports that nginx holds (to be confirmed in
+  part 2a).
+- **`/generate_204` must not be redirected.** The usual server block that redirects all of
+  port 80 to HTTPS breaks this probe. On the relay host, port 80 forwards `/generate_204` to the
+  relay and redirects everything else. Caddy, which redirects to HTTPS by default, needs the same
+  exception.
 
 **Official hosted relays**: not before V8 (D10). When they come, the same binary runs as
 `gono-cloud relay` in several regions. Their access control asks the control plane, or checks
@@ -327,8 +356,9 @@ tickets the control plane signed.
 
 ## 4. Phases
 
-Phases 0, 1 and 2 start now and run in parallel. Phase 3 needs 1 and 2; Phase 4 needs the gates
-listed in it. The sizes are estimates.
+Phase 0, Phase 1, and parts 2a and 2c of Phase 2 start now and run in parallel. Part 2b starts
+once Phase 0's specification is reviewed, because it implements those messages. Phase 3 needs 1
+and 2; Phase 4 needs the gates listed in it. The sizes are estimates.
 
 ### 4.1 Phase 0: specification and threat model
 
@@ -375,18 +405,24 @@ listed in it. The sizes are estimates.
 
 ### 4.3 Phase 2: device directory and relay in gono-cloud
 
-- **Owner**: gono-cloud. About three to four weeks.
-- **Relay (V6):**
-  - `gono-cloud relay`, also embedded in `serve`;
+- **Owner**: gono-cloud. About five to six weeks, in three parts. An earlier estimate of three to
+  four weeks left out that two-factor authentication is a feature of its own.
+- **2a. Relay (V6).** Starts now; it does not depend on Phase 0. About one and a half weeks.
+  - `gono-cloud relay`, also embedded in `serve`, configured by a `[relay]` section;
   - dependency check against axum 0.8, hyper, tokio and rustls;
   - a static musl build;
   - running behind nginx;
-  - `AccessControl` fed from the directory;
+  - `AccessControl`, first fed from a static allowlist, then from the directory (2b);
   - `ClientRateLimit`;
   - `RelayMetrics` in the admin UI;
   - the existing systemd hardening;
+  - the self-hosting details of 3.6: the public UDP socket for QAD, the certificate hand-over
+    through a renewal hook and `reloading_resolver`, the nginx and Caddy configuration with its
+    `/generate_204` exception, the install script's `--relay-host`, the relay sections of
+    `docs/reverse-proxy.md` and `docs/deployment.md`, and `config check` for the relay settings;
   - a load test: memory for 1000 idle clients, CPU per Gbps relayed.
-- **Directory:**
+- **2b. Directory and control channel.** Starts once Phase 0's specification is reviewed. About
+  two to three weeks.
   - the `devices` table;
   - registration;
   - the control channel `/gono/v1/ws`;
@@ -394,13 +430,24 @@ listed in it. The sizes are estimates.
   - revocation pushed to devices and to the relay;
   - audit;
   - the account page;
-  - two-factor authentication.
-- **The `gono-connect` crate** (3.3).
-- **Deliverables**: merged code with acceptance tests.
+  - the `gono-connect` crate (3.3).
+- **2c. Two-factor authentication.** Starts now and runs alongside 2b. About one and a half to two
+  weeks.
+  - TOTP with recovery codes;
+  - the second step at every web sign-in: the file UI, the admin UI and Login Flow v2's consent
+    page (app passwords of devices are unaffected);
+  - resets by an admin and through the CLI;
+  - required for accounts with remote control enabled (3.2).
+- **Deliverables**: merged code with acceptance tests, and the updated install script and
+  documentation.
 - **Done when**:
   - an unauthorized device cannot obtain other devices' addresses;
   - a revocation takes effect at the relay, with the delay measured;
-  - an outage of gono-cloud does not affect LAN use.
+  - an outage of gono-cloud does not affect LAN use;
+  - a fresh install with `--relay-host` behind nginx answers the relay's own probes:
+    `/generate_204` on port 80, and QAD on UDP 7842 with the copied certificate, also after a
+    renewal;
+  - two-factor authentication is live for remote-control accounts.
 
 ### 4.4 Phase 3: remote access in Input Show
 
@@ -464,11 +511,11 @@ listed in it. The sizes are estimates.
 | V1 HarmonyOS | **Passed in the app.** iroh 1.4.1, unpatched. Bind, direct dial (10.6 ms), inbound dial-back. Relay first, then the direct path selected about 0.1 s later. One connection survives Wi-Fi off and on. No socket option refused | The two conditions of 3.3 in production code. GSO stays off on the HarmonyOS kernel (a version check in noq-udp), which does not affect input | HM | Phase 1, Phase 4 |
 | V2 LAN performance | **Transport level at parity.** Wi-Fi datagram RTT p50 2.91 ms (quinn) vs 2.98 ms (iroh), p99 within radio noise. Loopback p99 +0.015–0.044 ms. CPU +1 to +2.5 points of one core per side at 1 kHz. Memory +5–7 MiB per process. Connection setup about +1 ms | The real product port, BULK throughput, HarmonyOS | NE, QR | Phase 4 |
 | V3 Platform builds and permissions | Not started | Every platform builds. Windows firewall rules for the same executable on IPv4 and IPv6. iOS Local Network permission (LAN path only). Android background rules | NE, platform lanes | Phase 3 |
-| V4 No n0 services | **Passed for a configured endpoint** (3.5). Only the peer and our relay are contacted, and no host name containing `iroh` or `n0` is queried | The CI test; macOS and Windows; a network switch; 30 minutes idle; the portmapper on | QR | Phase 1 (CI), Phase 3 |
+| V4 No n0 services | **Passed for a configured endpoint** (3.5). Only the peer and our relay are contacted, and no host name containing `iroh` or `n0` is queried | The CI test; macOS and Windows; a network switch; 30 minutes idle; the portmapper on; IPv6 bound (3.5) | QR | Phase 1 (CI), Phase 3 |
 | V5 API | **Covered by reading the code.** Everything in 3.3 exists, and so do per-path idle and keep-alive defaults | In Phase 1: exercise unidirectional streams and `set_priority` under multipath; serve several ALPNs on one endpoint | NE | Phase 1 |
-| V6 Relay in gono-cloud | **Known:** the relay runs in plain HTTP behind a proxy, it cannot sit under a path prefix, QAD needs its own certificate and UDP 7842, and `accept_conn_limit` is not implemented | All of Phase 2's relay work | gono-cloud | Phase 2 |
+| V6 Relay in gono-cloud | **Known:** the relay runs in plain HTTP behind a proxy, it cannot sit under a path prefix, QAD needs its own certificate and UDP 7842, and `accept_conn_limit` is not implemented | All of part 2a of Phase 2, including the self-hosting details of 3.6: the certificate hand-over for QAD, `/generate_204` behind a redirecting port 80, the second host name in the installer | gono-cloud | Phase 2 |
 | V7 Address lookup | **LAN decided**: mDNS feeds `MemoryLookup` | Lookup over the control channel: latency, caching, behaviour during an outage, no address leaks | gono-cloud, NE | Phase 2 |
-| V8 NAT traversal | Not started | Time to first use (relayed), time to direct, share of connections and bytes that go direct, fallback time when the direct path breaks, Wi-Fi ↔ cellular handover, input latency relayed and direct. Two devices behind one NAT must connect directly | QR, NE | Phase 1, D10 |
+| V8 NAT traversal | Not started | Time to first use (relayed), time to direct, share of connections and bytes that go direct, fallback time when the direct path breaks, Wi-Fi ↔ cellular handover, input latency relayed and direct, the share of direct connections that use IPv6. Two devices behind one NAT must connect directly | QR, NE | Phase 1, D10 |
 | V9 Security review | **Known:** no third-party audit and no SECURITY.md for iroh or noq. Three GitHub advisories fixed in 1.1.0, one of them high (a crafted relay frame blocks a client's relay traffic). A pre-authentication relay crash, fixed in 1.0.2, was disclosed only in a blog post. `cargo audit` does not map quinn advisories onto noq | Review `tls/verifier.rs`, the relay trust model and address handling. Find out whether iroh and noq are fuzzed. Consider a paid audit shared by both projects | NE, gono-cloud | Before Phase 3 ships |
 | V10 Maintenance | **Known:** majors get 1 year of full support (maintenance up to 3 years); minors get 3 months (up to 1 year). 2.x stays compatible on the wire with the non-deprecated parts of 1.x. About 7 core authors. noq takes quinn's fixes through periodic syncs | Upgrade at least every three months, reading quinn's advisories and noq's sync merges each time | NE | Ongoing |
 | V11 Phones | Not started | iOS background suspension and reconnect. Android Doze: shut the endpoint down in the background, or keep it in a foreground service. Battery cost of the keep-alive during sessions | MB | Phase 3 |
@@ -488,9 +535,10 @@ listed in it. The sizes are estimates.
 | R6 | CPU +1 to +2.5 points of a core, memory +5–7 MiB | Battery on laptops and phones | D8 gate in the real port; in stage 1 only remote sessions pay it |
 | R7 | Dialing needs the key | Typed-address pairing changes | The "who are you" exchange (D5) |
 | R8 | The relay path is TCP | Pointer stalls under loss on relayed sessions | V8; prefer direct paths; show "direct / relayed" in the UI |
-| R9 | NAT conditions in China: CGNAT is common, and some networks throttle UDP | A lower direct rate, higher relay cost | V8; relays close to users; bitrate caps on relayed paths; D10 |
+| R9 | NAT conditions in China: CGNAT is common, and some networks throttle UDP | A lower direct rate, higher relay cost | V8; IPv6 bound on every endpoint (3.5); relays close to users; bitrate caps on relayed paths; D10 |
 | R10 | Remote control raises the stakes: account takeover, a compromised server vouching for a fake device, unattended access | Abuse | Signed approvals from an already-trusted device (3.4); two-factor authentication; notices on every device; audit; unattended access off by default |
 | R11 | Background limits on phones | Phones are poor controlled devices | Computers are controlled; phones control and view |
+| R12 | Remote access makes self-hosting harder: a second host name and certificate, UDP 7842, a certificate hand-over, a port-80 exception | Fewer self-hosters enable it; relays that half work (QAD failing after a renewal, probes redirected) | The installer's `--relay-host`, documentation, `config check`, and the relay's own probes in part 2a's done criteria (3.6, 4.3) |
 
 ---
 
